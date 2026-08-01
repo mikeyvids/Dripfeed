@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>The Profiler Registry — MiSTer profiles</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1118;--panel:#171d28;--panel2:#101620;--line:#2b3445;--text:#edf2fa;--dim:#9aa6b9;--accent:#69d5a5;--accent2:#f3b94f;--bad:#ff7373;--good:#7fe3b6}
+*{box-sizing:border-box}body{margin:0;padding:24px;background:radial-gradient(circle at 10% 0,#172234 0,transparent 35%),var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{max-width:880px;margin:auto}
+.card{background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 18px 45px #0003}
+h1,h2,p{margin-top:0}h1{font-size:clamp(27px,4vw,38px);margin-bottom:5px;letter-spacing:-.03em}h2{font-size:18px;margin-bottom:6px}.eyebrow{color:var(--accent2);font-weight:900;letter-spacing:.13em;text-transform:uppercase;font-size:11px}p.sub,.help{color:var(--dim);font-size:13px}.callout{border-left:3px solid var(--accent2);padding:9px 12px;background:var(--panel2);border-radius:0 10px 10px 0}.toolbar,.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button,.button{appearance:none;background:var(--accent);color:#06271a;border:0;border-radius:11px;padding:10px 15px;min-height:42px;font:inherit;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+button.ghost,.button{background:var(--panel2);color:var(--text);border:1px solid var(--line)}button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,.button:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
+input[type=text],input[type=password],input[type=file]{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}input[type=checkbox]{width:auto}
+label{display:block;color:var(--dim);font-size:12px;font-weight:700;margin:12px 0 5px}.row>div{flex:1;min-width:200px}
+.p{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--panel2);border-radius:13px;padding:12px 13px;margin-top:9px}.p b{flex:1}.tag{display:inline-flex;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:12px;color:var(--dim)}.tag.good{color:var(--good);border-color:#316d57}code{background:var(--panel2);padding:2px 5px;border-radius:5px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,18px);opacity:0;pointer-events:none;background:#233047;border:1px solid var(--line);padding:11px 17px;border-radius:11px;transition:.2s;max-width:min(90vw,640px);z-index:5}.toast.show{opacity:1;transform:translate(-50%,0)}.toast.err{border-color:var(--bad)}.hidden{display:none!important}
+@media(max-width:680px){body{padding:12px}.card{padding:17px}.row>div{min-width:180px}.p{align-items:flex-start;flex-wrap:wrap}.p b{flex-basis:100%}}
+</style></head><body>
+<main class="shell">
+<section class="card">
+  <div class="eyebrow">MiSTer FPGA · player profiles</div>
+  <h1>The Profiler Registry</h1>
+  <p class="sub">One MiSTer, room for everyone. Each player keeps their own <b>game saves, save states, RetroAchievements identity, wallpapers, and menu image</b>.</p>
+  <p class="callout help"><b>Create and maintain profiles here; switch players on MiSTer.</b> The active player uses the normal MiSTer folders. Everyone else waits safely, and archiving never deletes a profile.</p>
+  <div class="toolbar"><button id="connect">Connect SD card</button><span id="status" class="tag">Not connected</span></div>
+</section>
+
+<section class="card hidden" id="main">
+  <div class="eyebrow">Your players</div><h2>Profiles</h2>
+  <div id="list"></div>
+  <div class="eyebrow" style="margin-top:22px">Profile details</div><h2>Create or edit a profile</h2>
+  <p class="sub">Choose <b>Edit</b> beside an existing player, or enter a new name. RetroAchievements is optional; leave the password blank while editing to keep the saved one.</p>
+  <div class="row">
+    <div><label>Profile name</label><input id="pname" type="text" maxlength="20" placeholder="e.g. Player One"></div>
+    <div><label>RA username (optional)</label><input id="rauser" type="text"></div>
+    <div><label>RA password (optional)</label><input id="rapass" type="password"></div>
+  </div>
+  <label>Wallpaper image (optional PNG/JPG; shown on HDMI menus)</label>
+  <input id="bg" type="file" accept="image/png,image/jpeg">
+  <label style="display:flex;gap:8px;align-items:center"><input id="showPass" type="checkbox"> Show password while typing</label>
+  <p class="sub">Credentials are written only to the selected card in MiSTer's standard <code>retroachievements.cfg</code> format. This page never sends them anywhere.</p>
+  <div class="row" style="margin-top:12px">
+    <button id="save">Save profile</button>
+  </div>
+</section>
+<section class="card hidden" id="backupCard">
+  <div class="eyebrow">Safety net</div><h2>Protect every player</h2>
+  <p class="sub"><b>Back the Files Up</b> protects the active player's complete live profile and every stored or archived profile, alongside a separate MiSTer-settings archive. Keep copies local or send them to one shared household cloud destination.</p>
+  <a class="button" href="../Backup/Back-the-Files-Up-Setup.html">Open Back the Files Up - Setup</a>
+</section>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+function toast(m,e){const t=$("#toast");t.textContent=m;t.className="toast show"+(e?" err":"");setTimeout(()=>t.className="toast",e?3500:2200);}
+let root=null,profDir=null;
+if(!window.showDirectoryPicker){$("#connect").disabled=true;$("#status").textContent="Use Chrome / Edge / Brave";}
+$("#connect").onclick=async()=>{
+  try{
+    root=await showDirectoryPicker({mode:"readwrite",id:"profiler"});
+    try{await root.getDirectoryHandle("Scripts");}catch(e){toast("Pick the whole SD card (the folder containing Scripts).",true);return;}
+    profDir=await root.getDirectoryHandle("profiles",{create:true});
+    $("#status").textContent="✓ SD card connected";$("#status").className="tag good";$("#main").classList.remove("hidden");
+    $("#backupCard").classList.remove("hidden");
+    refresh();
+  }catch(e){if(e.name!=="AbortError"){console.error(e);toast("Couldn't connect.",true);}}
+};
+async function activeName(){
+  try{const fh=await profDir.getFileHandle(".active");return (await(await fh.getFile()).text()).trim();}
+  catch(e){return "Default";}
+}
+function clean(n){return (n||"").replace(/[<>:"/\\|?*]/g,"").replace(/[^\x20-\x7E]/g,"").trim().slice(0,20);}
+function addText(parent,tag,text,className){const e=document.createElement(tag);e.textContent=text;if(className)e.className=className;parent.appendChild(e);return e;}
+async function refresh(){
+  const act=await activeName();const box=$("#list");box.innerHTML="";
+  const names=new Set([act]);
+  for await(const [n,h] of profDir.entries()){if(h.kind==="directory"&&!n.startsWith("."))names.add(n);}
+  for(const n of [...names].sort()){
+    const row=document.createElement("div");row.className="p";
+    addText(row,"b",n);
+    const state=addText(row,"span",n===act?"Active Profile":"Dormant Profile","tag");
+    if(n===act)state.classList.add("good");else state.style.color="var(--dim)";
+    const edit=document.createElement("button");edit.className="ghost";edit.textContent="Edit";
+    edit.onclick=async()=>{$("#pname").value=n;
+      try{const fh=await(await profDir.getDirectoryHandle(n)).getFileHandle("retroachievements.cfg");
+        const t=await(await fh.getFile()).text();
+        $("#rauser").value=(t.match(/^username=(.*)$/m)||[,""])[1];$("#rapass").value="";
+      }catch(e){$("#rauser").value="";$("#rapass").value="";}
+      toast("Loaded '"+n+"' — change fields and Save.");};
+    row.appendChild(edit);
+    if(n!==act){
+      const del=document.createElement("button");del.className="ghost";del.textContent="Archive";
+      del.onclick=async()=>{
+        if(!confirm(`Archive profile "${n}"? Its saves stay safe in profiles/.archive and can be restored by hand.`))return;
+          try{
+          const arch=await profDir.getDirectoryHandle(".archive",{create:true});
+          const ts=new Date().toISOString().replace(/[-:T]/g,"").slice(0,14);
+          let target=ts+"-"+n, suffix=1;
+          while(true){try{await arch.getDirectoryHandle(target);target=ts+"-"+n+"-"+suffix++;}catch(e){break;}}
+          await copyTree(await profDir.getDirectoryHandle(n),arch,target);
+          await profDir.removeEntry(n,{recursive:true});
+          toast("Archived "+n);refresh();
+        }catch(e){console.error(e);toast("Archive failed: "+e.name,true);}
+      };
+      row.appendChild(del);
+    }
+    box.appendChild(row);
+  }
+}
+async function copyTree(src,destParent,newName){
+  const dest=await destParent.getDirectoryHandle(newName,{create:true});
+  for await(const [n,h] of src.entries()){
+    if(n.startsWith("._")||n===".DS_Store")continue;
+    if(h.kind==="file"){const f=await h.getFile();const dh=await dest.getFileHandle(n,{create:true});
+      const w=await dh.createWritable();await f.stream().pipeTo(w);}
+    else await copyTree(h,dest,n);
+  }
+}
+$("#save").onclick=async()=>{
+  const name=clean($("#pname").value);
+  if(!name){toast("Type a profile name.",true);return;}
+  const act=await activeName();
+  try{
+    // ACTIVE profile's real files live at the card root; others live in profiles/<name>/
+    const base = (name===act) ? root : await profDir.getDirectoryHandle(name,{create:true});
+    if(name!==act){for(const d of ["saves","savestates","wallpapers"]) await base.getDirectoryHandle(d,{create:true});}
+    // RA credentials: update username/password lines, keep every other setting intact
+    const user=$("#rauser").value.trim(), pass=$("#rapass").value;
+    let cfg="# RetroAchievements configuration file\nusername=\npassword=\n";
+    try{const fh=await base.getFileHandle("retroachievements.cfg");cfg=await(await fh.getFile()).text();}catch(e){}
+    if(user||pass){
+      if(/^username=/m.test(cfg)) cfg=cfg.replace(/^username=.*$/m,"username="+user); else cfg+="\nusername="+user;
+      if(pass){ if(/^password=/m.test(cfg)) cfg=cfg.replace(/^password=.*$/m,"password="+pass); else cfg+="\npassword="+pass; }
+      const fh=await base.getFileHandle("retroachievements.cfg",{create:true});
+      const w=await fh.createWritable();await w.write(cfg);await w.close();
+    }
+    // Wallpaper
+    const f=$("#bg").files[0];
+    if(f){
+      const wp=await base.getDirectoryHandle("wallpapers",{create:true});
+      const dh=await wp.getFileHandle(f.name,{create:true});
+      const w=await dh.createWritable();await f.stream().pipeTo(w);
+    }
+    toast("Saved profile: "+name+(name===act?" (Active Profile — applied live)":" (Dormant Profile)"));
+    $("#rapass").value="";$("#bg").value="";
+    refresh();
+  }catch(e){console.error(e);toast("Save failed: "+e.name,true);}
+};
+$("#showPass").onchange=()=>{$("#rapass").type=$("#showPass").checked?"text":"password";};
+</script></body></html>

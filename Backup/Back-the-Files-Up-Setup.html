@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Back the Files Up - Setup</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1017;--panel:#161d28;--panel2:#0f1620;--line:#2c3748;--text:#edf3fb;--dim:#9ca9ba;--accent:#73d8aa;--gold:#f2b84b;--bad:#ff7474;--good:#83e4b8}
+*{box-sizing:border-box}body{margin:0;padding:24px;background:radial-gradient(circle at 8% 0,#17273a 0,transparent 34%),var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{max-width:920px;margin:auto}.card{background:color-mix(in srgb,var(--panel) 95%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 18px 48px #0004}h1,h2,h3,p{margin-top:0}h1{font-size:clamp(27px,4vw,40px);letter-spacing:-.03em;margin-bottom:5px}.files-tail{color:#aab4c2}h2{font-size:19px;margin-bottom:7px}h3{font-size:15px;margin-bottom:4px}.eyebrow{color:var(--gold);font-size:11px;font-weight:900;letter-spacing:.13em;text-transform:uppercase}.sub,.help{color:var(--dim)}.help{font-size:13px}.toolbar,.row,.stats,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row.between{justify-content:space-between}.stats{margin-top:16px}.stat{flex:1;min-width:165px;background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:11px 13px}.stat span{display:block;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.stat b{font-size:15px}.callout{background:var(--panel2);border-left:3px solid var(--gold);border-radius:0 11px 11px 0;padding:10px 13px}.callout.good{border-left-color:var(--accent)}.callout.bad{border-left-color:var(--bad)}.coverage{display:grid;grid-template-columns:1fr 1fr;gap:12px}.coverage>div{border:1px solid var(--line);border-radius:14px;background:var(--panel2);padding:15px}.checks{list-style:none;padding:0;margin:8px 0 0}.checks li{margin:6px 0}.checks li::before{content:"✓";color:var(--good);font-weight:900;margin-right:8px}.checks.no li::before{content:"×";color:var(--bad)}button,.button{appearance:none;border:0;border-radius:11px;padding:10px 15px;min-height:42px;background:var(--accent);color:#06281b;font:inherit;font-weight:850;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}button.secondary,.button.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}button.danger{color:var(--bad)}button:disabled{opacity:.45;cursor:not-allowed}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offset:2px}.tag{display:inline-flex;border:1px solid var(--line);background:var(--panel2);color:var(--dim);border-radius:999px;padding:4px 10px;font-size:12px}.tag.good{color:var(--good);border-color:#34745c}.tag.warn{color:var(--gold);border-color:#725d30}.hidden{display:none!important}label{display:block;color:var(--dim);font-size:12px;font-weight:750;margin:13px 0 5px}input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:10px 11px;font:inherit}textarea{min-height:150px;resize:vertical;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.steps{counter-reset:step;display:grid;gap:11px;margin-top:14px}.step{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:14px 14px 14px 52px}.step::before{counter-increment:step;content:counter(step);position:absolute;left:14px;top:14px;width:27px;height:27px;border-radius:50%;display:grid;place-items:center;background:var(--gold);color:#2b1b00;font-weight:900}.step p:last-child{margin-bottom:0}code{background:#0a111a;border:1px solid #263142;padding:2px 5px;border-radius:5px}.statusline{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;color:var(--dim)}.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,18px);opacity:0;pointer-events:none;z-index:9;max-width:min(92vw,680px);background:#243148;border:1px solid var(--line);border-radius:11px;padding:11px 17px;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}.toast.bad{border-color:var(--bad)}.fine{font-size:12px;color:var(--dim)}
+@media(max-width:700px){body{padding:12px}.card{padding:17px}.coverage,.grid{grid-template-columns:1fr}.stat{min-width:140px}.step{padding-left:45px}.step::before{left:10px}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="card">
+    <div class="eyebrow">MiSTer FPGA · safe backup helper</div>
+    <h1>Back the F<span class="files-tail">iles</span> Up - Setup</h1>
+    <p class="sub">Connect the whole MiSTer SD card, choose local-only or cloud backup, and let this page put the settings in the right place.</p>
+    <p class="callout"><b>Current household model:</b> one shared cloud destination protects this MiSTer and all Profiler profiles. A future release may offer shared-versus-individual authorization; this release intentionally does not split player backups.</p>
+    <div class="toolbar">
+      <button id="connect">Connect SD card</button>
+      <span id="connection" class="tag">Not connected</span>
+    </div>
+    <div id="summary" class="stats hidden">
+      <div class="stat"><span>Backup scope</span><b>Whole MiSTer + all profiles</b></div>
+      <div class="stat"><span>Cloud authorization</span><b id="authState">Not installed</b></div>
+      <div class="stat"><span>MiSTer cloud helper</span><b id="binaryState">Not installed</b></div>
+    </div>
+    <div id="setupCheck" class="statusline hidden">Connect the SD card to check setup.</div>
+    <div id="checkActions" class="actions hidden" style="margin-top:10px"><button id="checkAgain" class="secondary">Check my setup</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Exactly what is protected</h2>
+    <p class="help">This boundary is built into the script. A typo in setup cannot quietly turn it into a giant everything-backup.</p>
+    <div class="coverage">
+      <div><h3>✓ Included</h3><ul class="checks"><li><b>Current player's complete profile:</b> saves, save states, achievements settings, wallpapers, and menu image</li><li><b>Every stored profile:</b> everything inside <code>profiles/</code>, including archived profiles</li><li><b>Dripfeed:</b> schedule, configuration, reveal history, and recovery state</li><li><b>MiSTer settings:</b> the small settings in <code>config/</code> and <code>MiSTer.ini</code></li></ul></div>
+      <div><h3>× Not included</h3><ul class="checks no"><li>ROMs or disc images</li><li>Rebuildable databases, caches, thumbnails, or logs inside <code>config/</code></li><li>Unrelated media or screenshots</li><li>Other files outside the fixed list</li><li>This cloud authorization in its own backup</li></ul></div>
+    </div>
+    <p class="fine">The RetroAchievements file may contain a token. Treat every local or cloud archive like a password.</p>
+    <p class="callout good"><b>Restore is built in:</b> On MiSTer, open Scripts → <code>backtheFup.sh</code> → <b>Restore from a local backup</b>. Pick everything, every player, one player, or just one part such as saves. The script checks the backup and makes a Before Restore safety copy first.</p>
+  </section>
+
+  <section id="setup" class="card hidden">
+    <div class="row between"><div><div class="eyebrow">Step 1</div><h2>Where should verified backups go?</h2></div><span class="tag good">SD card is always first</span></div>
+    <label for="mode">Backup destination</label>
+    <select id="mode"><option value="local">Local archives only</option><option value="google">Google Drive + local archives</option><option value="other">Another rclone remote + local archives</option></select>
+    <p class="help">Cloud works through either Wi‑Fi or Ethernet. If the network is unavailable, the verified local archive remains in <code>_Backups/</code>.</p>
+
+    <div id="cloudHelp" class="hidden">
+      <div class="steps">
+        <div class="step"><h3>Get the two official rclone helpers</h3><p class="help">The computer copy opens Google sign-in. The MiSTer copy sends the finished backup. Download both from rclone; do not rename either file.</p><div class="actions"><a class="button secondary" href="https://rclone.org/downloads/" target="_blank" rel="noopener noreferrer">Computer download ↗</a><a class="button secondary" href="https://downloads.rclone.org/rclone-current-linux-arm-v7.zip" target="_blank" rel="noopener noreferrer">MiSTer ARMv7 download ↗</a></div></div>
+        <div class="step"><h3>Start sign-in from Terminal—not your browser's address bar</h3><p class="help">Open the <b>Terminal app on this computer</b>, paste <code>rclone config</code>, then press Return. Choose <b>New remote</b>. Name it <code>gdrive</code>, choose <b>drive</b>, and normally leave Client ID and Client Secret blank. Rclone then opens the real browser sign-in. This setup page cannot launch OAuth by itself.</p><div class="actions"><button id="copyConfigCmd" class="secondary">Copy Terminal command</button><a class="button secondary" href="https://rclone.org/drive/" target="_blank" rel="noopener noreferrer">Picture-by-picture Drive instructions ↗</a><a class="button secondary" href="https://rclone.org/remote_setup/" target="_blank" rel="noopener noreferrer">Headless setup help ↗</a></div></div>
+        <div class="step"><h3>Copy the finished authorization</h3><p class="help">Run <code>rclone config file</code>, open that file, and paste all of it below—or choose the file. It contains a reusable refresh token, not your Google password. You normally authorize once; repeat only if access is revoked, expires, or you deliberately replace it.</p><div class="actions"><button id="copyFileCmd" class="secondary">Copy “rclone config file”</button></div></div>
+      </div>
+      <label for="confFile">Choose rclone.conf (easiest)</label><input id="confFile" type="file" accept=".conf,text/plain">
+      <label for="confText">Or paste the entire rclone.conf</label><textarea id="confText" autocomplete="off" spellcheck="false" placeholder="[gdrive]&#10;type = drive&#10;scope = drive.file&#10;token = {...}"></textarea>
+      <div class="grid">
+        <div><label for="remoteName">Remote from that file</label><select id="remoteName"><option value="">Paste or choose rclone.conf first</option></select></div>
+        <div><label for="remoteFolder">Folder inside the remote</label><input id="remoteFolder" value="MiSTerBackups" maxlength="120" placeholder="MiSTerBackups"></div>
+      </div>
+      <label for="rcloneBinary">Unzipped Linux ARMv7 <code>rclone</code> file for MiSTer</label>
+      <input id="rcloneBinary" type="file">
+      <p class="help">Open the MiSTer ARMv7 download above, unzip it, open that folder, and choose the file named <code>rclone</code>. This page checks that it is an ARM program and writes it directly to <code>Scripts/.backthefup/bin/rclone</code>. You never choose the destination folder yourself.</p>
+      <p class="callout good help"><b>Advanced only:</b> your own Google Cloud OAuth client is optional, not required. If you make one, keep the app in Production—Google test-mode refresh tokens may expire quickly. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Cloud credentials ↗</a></p>
+    </div>
+
+    <div class="grid">
+      <div><label for="keepLive">Live archives kept on card</label><input id="keepLive" type="number" min="1" max="40" value="8"></div>
+      <div><label for="keepProfiles">Profiler archives kept on card</label><input id="keepProfiles" type="number" min="1" max="40" value="8"></div>
+    </div>
+    <div class="actions" style="margin-top:18px"><button id="save">Save setup to SD card</button><button id="removeCloud" class="secondary danger">Remove cloud authorization from this card</button></div>
+    <div id="saved" class="statusline">No changes saved during this visit.</div>
+  </section>
+
+  <section id="finish" class="card hidden">
+    <div class="eyebrow">Then, on MiSTer</div><h2>One menu item does the job</h2>
+    <ol class="help"><li>Safely eject the SD card and return it to MiSTer.</li><li>Make sure MiSTer has a believable date and time before cloud use.</li><li>Open Scripts → <code>backtheFup.sh</code>.</li><li>Choose <b>Check cloud connection</b> once, then <b>Back up everything now</b>.</li><li>To recover data later, choose <b>Restore from a local backup</b> and follow the controller prompts.</li></ol>
+    <p class="help">Each run creates and verifies local archives first. Cloud failure never deletes that local copy. Google normally does <b>not</b> ask you to sign in for every backup; rclone renews short-lived access with the saved refresh token.</p>
+  </section>
+</main>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+const $=s=>document.querySelector(s);
+let root=null,scripts=null,stateDir=null,confText="",binaryFile=null,hasSavedAuth=false,hasBinary=false,hasEngine=false,hasLauncher=false;
+const ENGINE_URL="https://raw.githubusercontent.com/mikeyvids/Dripfeed/main/Backup/Scripts/.backthefup/backtheFup-engine.sh";
+const LAUNCHER_URL="https://raw.githubusercontent.com/mikeyvids/Dripfeed/main/Backup/Scripts/backtheFup.sh";
+function notice(message,bad=false){const t=$("#toast");t.textContent=message;t.className="toast show"+(bad?" bad":"");clearTimeout(notice.timer);notice.timer=setTimeout(()=>t.className="toast",bad?5200:2800)}
+async function textFile(dir,name,fallback=""){try{const h=await dir.getFileHandle(name);return await(await h.getFile()).text()}catch(e){return fallback}}
+async function writeText(dir,name,value){const h=await dir.getFileHandle(name,{create:true}),w=await h.createWritable();await w.write(String(value));await w.close()}
+async function writeBlob(dir,name,value){const h=await dir.getFileHandle(name,{create:true}),w=await h.createWritable();await w.write(value);await w.close()}
+function safeCount(value){return String(Math.max(1,Math.min(40,Number.parseInt(value,10)||8)))}
+function safeFolder(value){return String(value||"").trim().replace(/^\/+|\/+$/g,"").replace(/[\r\n\0]/g,"").replace(/\/{2,}/g,"/")}
+function parseRemotes(text){const seen=new Set(),rows=[];for(const m of String(text).matchAll(/^\s*\[([^\]\r\n]+)\]\s*$/gm)){const name=m[1].trim();if(/^[A-Za-z0-9._-]+$/.test(name)&&!seen.has(name)){seen.add(name);rows.push(name)}}return rows}
+function remoteValue(text,name,key){let active="";for(const line of String(text).split(/\r?\n/)){const section=line.match(/^\s*\[([^\]]+)\]\s*$/);if(section){active=section[1].trim();continue}if(active===name){const field=line.match(new RegExp("^\\s*"+key+"\\s*=\\s*(.*?)\\s*$"));if(field)return field[1].trim()}}return ""}
+function remoteType(text,name){return remoteValue(text,name,"type")}
+function remoteAuthReady(text,name){const type=remoteType(text,name);if(!type)return false;if(type!=="drive")return true;return Boolean(remoteValue(text,name,"token")||remoteValue(text,name,"service_account_file")||remoteValue(text,name,"service_account_credentials"))}
+function refreshRemotes(){const names=parseRemotes(confText),select=$("#remoteName"),old=select.value;select.textContent="";for(const name of names){const o=document.createElement("option");o.value=name;o.textContent=name;select.appendChild(o)}if(!names.length){const o=document.createElement("option");o.value="";o.textContent="No valid remote found";select.appendChild(o)}else if(names.includes(old))select.value=old}
+function updateMode(){const cloud=$("#mode").value!=="local";$("#cloudHelp").classList.toggle("hidden",!cloud);$("#removeCloud").disabled=!hasSavedAuth}
+function parseConfig(text,key,fallback=""){const m=String(text).match(new RegExp("^"+key+"=(.*)$","m"));return m?m[1].trim():fallback}
+async function isArmRclone(file){try{if(!file||file.size<500000)return false;const b=new Uint8Array(await file.slice(0,20).arrayBuffer());return b[0]===0x7f&&b[1]===0x45&&b[2]===0x4c&&b[3]===0x46&&b[4]===1&&b[5]===1&&b[18]===40&&b[19]===0}catch(e){return false}}
+async function currentBinary(){try{const bin=await stateDir.getDirectoryHandle("bin"),h=await bin.getFileHandle("rclone");return await h.getFile()}catch(e){return null}}
+async function setupReport(){
+  if(!stateDir)return;
+  const current=await textFile(stateDir,"backtheFup.conf",""),remote=parseConfig(current,"RCLONE_REMOTE",""),auth=await textFile(stateDir,"rclone.conf","");
+  const bin=binaryFile||await currentBinary(),armOk=await isArmRclone(bin),cloud=Boolean(remote),remoteName=remote.split(":",1)[0],authOk=!cloud||(Boolean(auth)&&parseRemotes(auth).includes(remoteName)&&remoteAuthReady(auth,remoteName)),ready=hasLauncher&&hasEngine&&Boolean(current)&&(!cloud||(authOk&&armOk));
+  hasBinary=armOk;hasSavedAuth=Boolean(auth);$("#binaryState").textContent=armOk?"Installed":"Missing";$("#authState").textContent=auth?(remoteName&&remoteAuthReady(auth,remoteName)?"Installed":"Incomplete"):"Not installed";
+  const line=$("#setupCheck");line.className="statusline "+(ready?"callout good":"callout bad");
+  if(ready)line.textContent=cloud?"✓ Ready: local backups are verified first, then copied to "+remote+".":"✓ Ready: verified backups will stay in _Backups on this SD card.";
+  else if(!hasLauncher)line.textContent="Needs repair: the visible Scripts/backtheFup.sh launcher is missing.";
+  else if(!hasEngine)line.textContent="Needs repair: the hidden backup engine is missing.";
+  else if(!current)line.textContent="One easy step left: choose a destination below and press Save setup to SD card.";
+  else if(cloud&&!authOk)line.textContent="Google sign-in is unfinished. Run rclone config on the computer until the browser says access is complete, then choose the finished rclone.conf below.";
+  else if(cloud&&!armOk)line.textContent="Cloud needs the MiSTer ARMv7 rclone file. Download, unzip, choose the file named rclone below, then press Save.";
+  else line.textContent="Setup is incomplete. Review the highlighted cloud fields below and press Save.";
+}
+async function fetchChecked(url,identity){const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error("download failed");const body=await response.text();if(!body.startsWith("#!/bin/bash")||!body.includes(identity))throw new Error("downloaded file did not pass its identity check");return body}
+
+if(!window.showDirectoryPicker){$("#connect").disabled=true;$("#connection").textContent="Use Chrome, Edge, or Brave"}
+$("#connect").onclick=async()=>{try{
+  root=await window.showDirectoryPicker({mode:"readwrite",id:"mister-back-the-files-up"});scripts=await root.getDirectoryHandle("Scripts");await root.getDirectoryHandle("linux");await root.getDirectoryHandle("games");
+  try{await scripts.getFileHandle("backtheFup.sh");hasLauncher=true}
+  catch(missing){notice("Visible launcher missing—downloading the current public launcher…");await writeText(scripts,"backtheFup.sh",await fetchChecked(LAUNCHER_URL,"Back the Files Up"));hasLauncher=true}
+  stateDir=await scripts.getDirectoryHandle(".backthefup",{create:true});
+  try{await stateDir.getFileHandle("backtheFup-engine.sh");hasEngine=true}
+  catch(missing){
+    notice("Hidden engine missing—downloading the current public engine…");
+    await writeText(stateDir,"backtheFup-engine.sh",await fetchChecked(ENGINE_URL,"Back the Files Up engine"));hasEngine=true;
+  }
+  const current=await textFile(stateDir,"backtheFup.conf","");
+  $("#keepLive").value=safeCount(parseConfig(current,"KEEP_LIVE","8"));$("#keepProfiles").value=safeCount(parseConfig(current,"KEEP_PROFILER","8"));
+  const remote=parseConfig(current,"RCLONE_REMOTE","");if(remote){const bits=remote.split(":");$("#remoteFolder").value=bits.slice(1).join(":")||"MiSTerBackups";$("#mode").value="google"}
+  confText=await textFile(stateDir,"rclone.conf","");$("#confText").value=confText;refreshRemotes();if(remote)$("#remoteName").value=remote.split(":",1)[0];
+  if(remote&&remoteType(confText,remote.split(":",1)[0])!=="drive")$("#mode").value="other";
+  hasSavedAuth=Boolean(confText);
+  hasBinary=await isArmRclone(await currentBinary());
+  $("#connection").textContent="✓ MiSTer SD card connected";$("#connection").className="tag good";
+  for(const id of ["summary","setupCheck","checkActions","setup","finish"])$("#"+id).classList.remove("hidden");updateMode();await setupReport();
+}catch(e){if(e.name!=="AbortError"){console.error(e);notice("Choose the whole MiSTer SD card containing Scripts/backtheFup.sh. If the hidden engine is missing, connect this computer to the internet and try again.",true)}}};
+$("#mode").onchange=updateMode;
+$("#confFile").onchange=async e=>{const file=e.target.files[0];if(!file)return;confText=await file.text();$("#confText").value=confText;refreshRemotes();notice("Authorization file loaded in this page. Press Save to copy it to the SD card.")};
+$("#confText").oninput=()=>{confText=$("#confText").value;refreshRemotes()};
+$("#rcloneBinary").onchange=async e=>{binaryFile=e.target.files[0]||null;if(binaryFile&&binaryFile.name!=="rclone")notice("That file is not named rclone. Choose the unzipped Linux ARMv7 file named rclone.",true);else if(binaryFile&&!await isArmRclone(binaryFile))notice("That is not the Linux ARMv7 rclone program. Unzip the ARMv7 download and choose the file inside named rclone.",true);else if(binaryFile){notice("Correct MiSTer helper selected. Press Save setup to SD card.");await setupReport()}};
+async function copy(value,label){try{await navigator.clipboard.writeText(value);notice(label+" copied.")}catch(e){notice("Copy unavailable. Type: "+value,true)}}
+$("#copyConfigCmd").onclick=()=>copy("rclone config","Command");$("#copyFileCmd").onclick=()=>copy("rclone config file","Command");
+
+$("#save").onclick=async()=>{if(!stateDir){notice("Connect the SD card first.",true);return}const cloud=$("#mode").value!=="local",keepLive=safeCount($("#keepLive").value),keepProfiles=safeCount($("#keepProfiles").value);let remote="";
+  if(cloud){const pasted=$("#confText").value;if(pasted.trim())confText=pasted;const names=parseRemotes(confText),name=$("#remoteName").value,folder=safeFolder($("#remoteFolder").value),type=remoteType(confText,name),candidate=binaryFile||await currentBinary();if(!confText||!names.includes(name)||!type){notice("Choose or paste a valid rclone.conf, then select its remote.",true);return}if($("#mode").value==="google"&&type!=="drive"){notice("That remote is type “"+type+"”. Choose Another rclone remote, or select a Google Drive remote.",true);return}if(!remoteAuthReady(confText,name)){notice("Google sign-in is not finished in this rclone.conf. Run rclone config on the computer through the browser approval, then choose the finished file.",true);return}if(!folder){notice("Give the cloud folder a simple name such as MiSTerBackups.",true);return}if(!candidate||candidate.name!=="rclone"||!await isArmRclone(candidate)){notice("Choose the unzipped Linux ARMv7 file named rclone. Cloud backup cannot be marked ready without it.",true);return}remote=name+":"+folder}
+  try{const cfg=["# Back the Files Up v1.5.0 — settings only.","BACKUP_DIR=/media/fat/_Backups","KEEP_LIVE="+keepLive,"KEEP_PROFILER="+keepProfiles,"BACKUP_SCOPE=all-profiles","RCLONE_REMOTE="+remote,"RCLONE_LIVE_DIR=live","RCLONE_PROFILER_DIR=profiler",""] .join("\n");await writeText(stateDir,"backtheFup.conf",cfg);
+    if(cloud){await writeText(stateDir,"rclone.conf",confText);hasSavedAuth=true;if(binaryFile){const bin=await stateDir.getDirectoryHandle("bin",{create:true});await writeBlob(bin,"rclone",binaryFile)}}
+    $("#authState").textContent=cloud?"Installed":(hasSavedAuth?"Stored but disabled":"Not used");if(binaryFile){hasBinary=true;$("#binaryState").textContent="Installed"}$("#saved").textContent=cloud?"Saved. On MiSTer, run backtheFup.sh → Check cloud connection.":"Saved. Backups will stay in _Backups on this SD card.";
+    updateMode();
+    $("#confText").value="";$("#confFile").value="";notice("Back the Files Up is configured.");await setupReport()
+  }catch(e){console.error(e);notice("Could not save setup. Reconnect the card with read/write permission and try again.",true)}};
+$("#removeCloud").onclick=async()=>{if(!stateDir){notice("Connect the SD card first.",true);return}if(!confirm("Remove the saved cloud authorization and destination from this SD card?\n\nLocal backups will still work. This does not delete anything already in the cloud."))return;try{try{await stateDir.removeEntry("rclone.conf")}catch(e){}const current=await textFile(stateDir,"backtheFup.conf","");const next=current.match(/^RCLONE_REMOTE=/m)?current.replace(/^RCLONE_REMOTE=.*$/m,"RCLONE_REMOTE="):current+"\nRCLONE_REMOTE=\n";await writeText(stateDir,"backtheFup.conf",next);hasSavedAuth=false;$("#mode").value="local";$("#authState").textContent="Removed";$("#confText").value="";confText="";refreshRemotes();updateMode();$("#saved").textContent="Cloud authorization removed. Local backups remain available.";notice("Cloud authorization removed from this card.");await setupReport()}catch(e){console.error(e);notice("Could not remove the authorization file.",true)}};
+$("#checkAgain").onclick=async()=>{await setupReport();notice("Setup checked. The result is shown above.")};
+</script>
+</body>
+</html>

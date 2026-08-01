@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wifi-Swap Registry</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1118;--panel:#171d28;--panel2:#101620;--line:#2b3445;--text:#edf2fa;--dim:#9aa6b9;--accent:#69d5a5;--accent2:#f3b94f;--bad:#ff7373;--good:#7fe3b6}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,#172234 0,transparent 35%),var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px}
+.shell{max-width:880px;margin:auto}.card{background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 18px 45px #0003}
+h1,h2,h3,p{margin-top:0}h1{font-size:clamp(25px,4vw,38px);margin-bottom:4px;letter-spacing:-.025em}h2{font-size:18px;margin-bottom:6px}h3{font-size:16px;margin-bottom:2px}.eyebrow{color:var(--accent2);font-weight:800;letter-spacing:.13em;text-transform:uppercase;font-size:11px}.sub,.help{color:var(--dim)}.help{font-size:13px}.callout{border-left:3px solid var(--accent2);padding:8px 12px;background:var(--panel2);border-radius:0 10px 10px 0}
+.toolbar,.row,.summary{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.summary{margin-top:16px}.stat{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 13px;min-width:135px}.stat span{display:block;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.stat b{font-size:16px}
+button{appearance:none;border:0;border-radius:11px;padding:10px 15px;background:var(--accent);color:#06271a;font-weight:800;cursor:pointer;min-height:42px}button.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}button.danger{color:var(--bad)}button:disabled{opacity:.45;cursor:not-allowed}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
+.tag{display:inline-flex;align-items:center;border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:3px 9px;color:var(--dim);font-size:12px}.tag.good{color:var(--good);border-color:#316d57}.tag.warn{color:var(--accent2);border-color:#785f31}.hidden{display:none!important}
+.profiles{display:grid;gap:12px;margin-top:14px}.profile{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;border:1px solid var(--line);background:var(--panel2);border-radius:14px;padding:16px}.profile .meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.profile .actions{display:flex;gap:8px;align-items:center}.profile .actions button{padding:8px 11px;min-height:36px}.ssid{color:var(--dim);overflow-wrap:anywhere}
+label{display:block;color:var(--dim);font-size:12px;font-weight:700;margin:12px 0 5px}input,select{width:100%;border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:10px 11px;border-radius:10px;font:inherit}input[type=checkbox]{width:auto}.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.check{display:flex;gap:8px;align-items:center;color:var(--text);font-size:14px}.form-actions{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:18px}.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,18px);opacity:0;pointer-events:none;background:#233047;border:1px solid var(--line);padding:11px 17px;border-radius:11px;transition:.2s;max-width:min(90vw,640px);z-index:5}.toast.show{opacity:1;transform:translate(-50%,0)}.toast.bad{border-color:var(--bad)}code{background:var(--panel2);padding:2px 5px;border-radius:5px}
+@media(max-width:680px){body{padding:12px}.card{padding:17px}.grid{grid-template-columns:1fr}.profile{grid-template-columns:1fr}.profile .actions{justify-content:flex-start}.stat{flex:1}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="card">
+    <div class="eyebrow">MiSTer FPGA network profiles</div>
+    <h1>Wifi-Swap Registry</h1>
+    <p class="sub">For the MiSTer that <i>gets around</i> — save friendly Wi‑Fi choices such as <b>Home</b>, <b>Phone Hotspot</b>, and <b>Travel</b>. On MiSTer, run <code>wifi-swap.sh</code> and choose where it connects.</p>
+    <p class="callout help"><b>Separate from Profiler:</b> these are network profiles only. They never alter player saves, achievements, or wallpapers.</p>
+    <div class="toolbar">
+      <button id="connect">Connect SD card</button>
+      <span id="connection" class="tag">Not connected</span>
+    </div>
+    <div id="summary" class="summary hidden">
+      <div class="stat"><span>Saved profiles</span><b id="profileCount">0</b></div>
+      <div class="stat"><span>Last connected choice</span><b id="activeName">None yet</b></div>
+      <div class="stat"><span>Privacy</span><b>Card only</b></div>
+    </div>
+  </section>
+
+  <section id="profilesCard" class="card hidden">
+    <div class="row" style="justify-content:space-between">
+      <div><h2>Network profiles</h2><p class="help">A profile is a remembered network—not a player.</p></div>
+      <button id="newProfile">+ Add Wi‑Fi profile</button>
+    </div>
+    <div id="empty" class="callout help">No profiles yet. Add the Wi‑Fi you use most often.</div>
+    <div id="profiles" class="profiles"></div>
+  </section>
+
+  <section id="importCard" class="card hidden">
+    <div class="row" style="justify-content:space-between">
+      <div><div class="eyebrow">Already connected before?</div><h2>Bring over MiSTer's remembered Wi-Fi</h2><p class="help">Wifi-Swap can copy compatible connections already saved by MiSTer's normal Wi-Fi tool. It leaves the originals alone and never shows their passwords.</p></div>
+      <button id="importExisting" class="secondary">Import existing MiSTer Wi-Fi</button>
+    </div>
+    <p id="importSummary" class="callout help">Checking the card…</p>
+  </section>
+
+  <section id="editor" class="card hidden">
+    <div class="eyebrow" id="editorMode">New network</div>
+    <h2 id="editorTitle">Add a Wi‑Fi profile</h2>
+    <p class="help">The password is converted to a WPA key in this browser, then written only to the selected SD card. It is never uploaded or placed in this HTML file.</p>
+    <div class="grid">
+      <div><label for="label">Friendly name</label><input id="label" maxlength="48" placeholder="Home"></div>
+      <div><label for="ssid">Wi‑Fi network name (SSID)</label><input id="ssid" maxlength="64" placeholder="Your network name"></div>
+      <div><label for="security">Security</label><select id="security"><option value="wpa">WPA/WPA2 Personal</option><option value="open">Open network (no password)</option></select></div>
+      <div><label for="country">Two-letter country code</label><input id="country" value="US" maxlength="2" autocapitalize="characters" placeholder="US"></div>
+    </div>
+    <div id="passwordWrap">
+      <label for="password">Password or 64-digit WPA key</label>
+      <input id="password" type="password" autocomplete="new-password" placeholder="Leave blank while editing to keep the existing key">
+      <label class="check"><input id="showPassword" type="checkbox"> Show while typing</label>
+    </div>
+    <label class="check"><input id="hiddenNetwork" type="checkbox"> Hidden network (does not broadcast its name)</label>
+    <p class="help"><b>Country matters:</b> use the country where the MiSTer is operating so its Wi‑Fi radio follows local channel rules. Wifi‑Swap supports WPA/WPA2 Personal and open networks—not business/enterprise login pages or captive portals.</p>
+    <div class="form-actions">
+      <button id="cancel" class="secondary">Cancel</button>
+      <button id="save">Save profile</button>
+    </div>
+  </section>
+
+  <section id="how" class="card hidden">
+    <h2>Then, on MiSTer</h2>
+    <ol class="help">
+      <li>Safely eject the SD card and return it to MiSTer.</li>
+      <li>Open Scripts → <code>wifi-swap.sh</code>. It uses a compatible official Wi‑Fi helper already on the card; if needed, it can cache the current helper when MiSTer has internet.</li>
+      <li>Choose a network profile. Switching can end an active SSH, CIFS, or browser connection.</li>
+    </ol>
+    <p class="callout help"><b>Seeing the same Wi‑Fi name more than once in a network scan?</b> One router can advertise separate 2.4, 5, or 6 GHz access points. The Registry still saves one friendly profile, and Wifi‑Swap selects that exact profile internally.</p>
+    <p class="help">Wifi‑Swap preserves networks owned by the official Wi‑Fi tool. Its own blocks are clearly marked in <code>linux/wpa_supplicant.conf</code> and are installed transactionally when you run the MiSTer script.</p>
+  </section>
+</main>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+const $=s=>document.querySelector(s);
+let root=null,linuxDir=null,stateDir=null,profilesDir=null,activeId="",editingId="",editingOriginalSsid="",importableNetworks=[];
+const encoder=new TextEncoder();
+
+function notice(message,bad=false){const t=$("#toast");t.textContent=message;t.className="toast show"+(bad?" bad":"");clearTimeout(notice.timer);notice.timer=setTimeout(()=>t.className="toast",bad?4800:2600);}
+function cleanLine(value,max=64){return String(value||"").replace(/[\r\n\0]/g,"").trim().slice(0,max);}
+function cleanSsid(value){return String(value||"").replace(/[\r\n\0]/g,"");}
+function safeId(seed){let base=cleanLine(seed,48).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,44)||"wifi";const bytes=new Uint8Array(3);crypto.getRandomValues(bytes);return base+"-"+[...bytes].map(b=>b.toString(16).padStart(2,"0")).join("");}
+function bytesToHex(buffer){return [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,"0")).join("");}
+function ssidHex(ssid){return bytesToHex(encoder.encode(ssid));}
+function validCountry(value){return /^[A-Z]{2}$/.test(value)&&value!=="ZZ";}
+function addText(parent,tag,text,className){const el=document.createElement(tag);el.textContent=text;if(className)el.className=className;parent.appendChild(el);return el;}
+
+async function readText(dir,name,fallback=""){
+  try{const h=await dir.getFileHandle(name);return (await(await h.getFile()).text()).replace(/\r?\n$/,"");}catch(e){return fallback;}
+}
+async function writeText(dir,name,value){const h=await dir.getFileHandle(name,{create:true});const w=await h.createWritable();await w.write(String(value));await w.close();}
+
+if(!window.showDirectoryPicker){$("#connect").disabled=true;$("#connection").textContent="Use Chrome, Edge, or Brave";}
+$("#connect").onclick=async()=>{
+  try{
+    root=await window.showDirectoryPicker({mode:"readwrite",id:"mister-wifi-swap"});
+    const scripts=await root.getDirectoryHandle("Scripts");
+    linuxDir=await root.getDirectoryHandle("linux");
+    stateDir=await scripts.getDirectoryHandle(".wifi-swap",{create:true});
+    profilesDir=await stateDir.getDirectoryHandle("profiles",{create:true});
+    activeId=await readText(stateDir,"active","");
+    $("#connection").textContent="✓ SD card connected";$("#connection").className="tag good";
+    for(const id of ["summary","profilesCard","importCard","how"])$("#"+id).classList.remove("hidden");
+    await refresh();
+    await refreshImports();
+  }catch(e){if(e.name!=="AbortError"){console.error(e);notice("Choose the whole MiSTer SD card—the folder containing Scripts and linux.",true);}}
+};
+
+async function getProfiles(){
+  const rows=[];
+  for await(const [id,h] of profilesDir.entries()){
+    if(h.kind!=="directory"||id.startsWith("."))continue;
+    const label=await readText(h,"label.txt",id),ssid=await readText(h,"ssid.txt",""),country=await readText(h,"country.txt",""),security=await readText(h,"security.txt","wpa"),hidden=await readText(h,"hidden.txt","0");
+    if(!ssid)continue;
+    rows.push({id,h,label,ssid,country,security,hidden:hidden==="1"});
+  }
+  return rows.sort((a,b)=>a.label.localeCompare(b.label));
+}
+async function refresh(){
+  const rows=await getProfiles(),box=$("#profiles");box.textContent="";
+  $("#profileCount").textContent=String(rows.length);$("#empty").classList.toggle("hidden",rows.length>0);
+  const active=rows.find(p=>p.id===activeId);$("#activeName").textContent=active?active.label:"None yet";
+  for(const p of rows){
+    const card=document.createElement("article");card.className="profile";
+    const body=document.createElement("div");addText(body,"h3",p.label);addText(body,"div",p.ssid,"ssid");
+    const meta=document.createElement("div");meta.className="meta";
+    if(p.id===activeId)addText(meta,"span","Last connected","tag good");
+    addText(meta,"span",p.security==="open"?"Open":"WPA/WPA2","tag");addText(meta,"span","Country "+p.country,"tag");if(p.hidden)addText(meta,"span","Hidden","tag");body.appendChild(meta);
+    const actions=document.createElement("div");actions.className="actions";
+    const edit=document.createElement("button");edit.className="secondary";edit.textContent="Edit";edit.onclick=()=>editProfile(p);actions.appendChild(edit);
+    const del=document.createElement("button");del.className="secondary danger";del.textContent="Remove";del.onclick=()=>removeProfile(p);actions.appendChild(del);
+    card.append(body,actions);box.appendChild(card);
+  }
+}
+
+function resetEditor(){editingId="";editingOriginalSsid="";$("#editorMode").textContent="New network";$("#editorTitle").textContent="Add a Wi‑Fi profile";$("#label").value="";$("#ssid").value="";$("#security").value="wpa";$("#country").value="US";$("#password").value="";$("#hiddenNetwork").checked=false;securityChanged();}
+function openEditor(){ $("#editor").classList.remove("hidden");$("#editor").scrollIntoView({behavior:"smooth",block:"start"}); }
+$("#newProfile").onclick=()=>{resetEditor();openEditor();$("#label").focus();};
+$("#cancel").onclick=()=>{$("#editor").classList.add("hidden");resetEditor();};
+$("#showPassword").onchange=()=>{$("#password").type=$("#showPassword").checked?"text":"password";};
+function securityChanged(){const open=$("#security").value==="open";$("#passwordWrap").classList.toggle("hidden",open);}
+$("#security").onchange=securityChanged;
+
+async function editProfile(p){
+  editingId=p.id;editingOriginalSsid=p.ssid;$("#editorMode").textContent="Editing network";$("#editorTitle").textContent=p.label;
+  $("#label").value=p.label;$("#ssid").value=p.ssid;$("#security").value=p.security;$("#country").value=p.country;$("#password").value="";$("#hiddenNetwork").checked=p.hidden;securityChanged();openEditor();
+}
+
+async function derivePsk(ssid,password){
+  if(/^[0-9a-fA-F]{64}$/.test(password))return password.toLowerCase();
+  if(password.length<8||password.length>63)throw new Error("WPA passwords must be 8–63 characters, or a 64-digit hexadecimal key.");
+  if(!crypto.subtle)throw new Error("This browser cannot create a WPA key. Use current Chrome, Edge, or Brave.");
+  const key=await crypto.subtle.importKey("raw",encoder.encode(password),"PBKDF2",false,["deriveBits"]);
+  const bits=await crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-1",salt:encoder.encode(ssid),iterations:4096},key,256);
+  return bytesToHex(bits);
+}
+function extractPsk(block){return (String(block).match(/^\s*psk\s*=\s*([0-9a-fA-F]{64})\s*$/m)||[])[1]||"";}
+function networkBlock(hex,security,psk,hidden){const lines=["network={","    ssid="+hex];if(security==="open")lines.push("    key_mgmt=NONE");else lines.push("    psk="+psk);if(hidden)lines.push("    scan_ssid=1");lines.push("}");return lines.join("\n")+"\n";}
+
+function decodeHexSsid(value){
+  if(!/^(?:[0-9a-fA-F]{2}){1,32}$/.test(value))return "";
+  try{return new TextDecoder().decode(new Uint8Array(value.match(/../g).map(v=>parseInt(v,16))));}catch(e){return "";}
+}
+function unquoteWpa(value){
+  const v=String(value||"").trim();
+  if(!v.startsWith('"')||!v.endsWith('"'))return "";
+  try{return JSON.parse(v);}catch(e){return v.slice(1,-1).replace(/\\"/g,'"').replace(/\\\\/g,'\\');}
+}
+function fieldFromBlock(block,name){
+  const m=String(block).match(new RegExp("^\\s*"+name+"\\s*=\\s*(.+?)\\s*$","m"));
+  return m?m[1].trim():"";
+}
+function parseRememberedNetworks(text){
+  const country=(String(text).match(/^\s*country\s*=\s*([A-Za-z]{2})\s*$/m)||[])[1]?.toUpperCase()||"US";
+  const blocks=[];let lines=[],inside=false,managed=false;
+  for(const line of String(text).split(/\r?\n/)){
+    if(/^# WIFI-SWAP:BEGIN:/.test(line)){managed=true;continue}
+    if(/^# WIFI-SWAP:END:/.test(line)){managed=false;continue}
+    if(managed)continue;
+    if(!inside&&/^\s*network\s*=\s*\{\s*$/.test(line)){inside=true;lines=[line];continue}
+    if(!inside)continue;
+    lines.push(line);
+    if(/^\s*}\s*$/.test(line)){blocks.push(lines.join("\n")+"\n");inside=false;lines=[]}
+  }
+  const out=[];
+  for(const block of blocks){
+    const ident=unquoteWpa(fieldFromBlock(block,"id_str"));if(ident.startsWith("wifi-swap:"))continue;
+    const rawSsid=fieldFromBlock(block,"ssid"),ssid=rawSsid.startsWith('"')?unquoteWpa(rawSsid):decodeHexSsid(rawSsid);
+    if(!ssid)continue;
+    const keyMgmt=fieldFromBlock(block,"key_mgmt").toUpperCase(),rawPsk=fieldFromBlock(block,"psk"),hidden=fieldFromBlock(block,"scan_ssid")==="1";
+    let security="",psk="",passphrase="";
+    if(keyMgmt==="NONE"){security="open"}
+    else if(/^[0-9a-fA-F]{64}$/.test(rawPsk)){security="wpa";psk=rawPsk.toLowerCase()}
+    else if(rawPsk.startsWith('"')){security="wpa";passphrase=unquoteWpa(rawPsk)}
+    else continue;
+    out.push({ssid,country,security,psk,passphrase,hidden});
+  }
+  return out;
+}
+async function refreshImports(){
+  let text="";try{text=await(await(await linuxDir.getFileHandle("wpa_supplicant.conf")).getFile()).text()}catch(e){}
+  const saved=new Set((await getProfiles()).map(p=>p.ssid));
+  importableNetworks=parseRememberedNetworks(text).filter((n,i,a)=>!saved.has(n.ssid)&&a.findIndex(x=>x.ssid===n.ssid)===i);
+  const summary=$("#importSummary"),button=$("#importExisting");button.disabled=!importableNetworks.length;
+  if(importableNetworks.length){summary.textContent=importableNetworks.length+" compatible remembered connection"+(importableNetworks.length===1?" is":"s are")+" ready to import. Existing Wifi-Swap profiles and MiSTer's original connections stay untouched.";summary.className="callout help"}
+  else{summary.textContent="Nothing new to import. Every compatible remembered connection is already in Wifi-Swap, or MiSTer has not saved one yet.";summary.className="callout help"}
+}
+async function importOne(n){
+  const id=safeId(n.ssid),dir=await profilesDir.getDirectoryHandle(id,{create:true}),hex=ssidHex(n.ssid);
+  let psk=n.psk;if(n.security==="wpa"&&!psk)psk=await derivePsk(n.ssid,n.passphrase);
+  await writeText(dir,"label.txt",n.ssid+"\n");await writeText(dir,"ssid.txt",n.ssid+"\n");await writeText(dir,"ssid.hex",hex+"\n");await writeText(dir,"country.txt",n.country+"\n");await writeText(dir,"security.txt",n.security+"\n");await writeText(dir,"hidden.txt",(n.hidden?"1":"0")+"\n");
+  await writeText(dir,"network.conf",networkBlock(hex,n.security,psk,n.hidden));
+}
+$("#importExisting").onclick=async()=>{
+  if(!importableNetworks.length)return;
+  try{for(const n of importableNetworks)await importOne(n);const count=importableNetworks.length;await refresh();await refreshImports();notice("Imported "+count+" remembered Wi-Fi connection"+(count===1?".":"s."));}
+  catch(e){console.error(e);notice("One connection could not be imported. No MiSTer-owned connection was changed.",true)}
+};
+
+$("#save").onclick=async()=>{
+  const label=cleanLine($("#label").value,48),ssid=cleanSsid($("#ssid").value),security=$("#security").value,country=cleanLine($("#country").value,2).toUpperCase(),hidden=$("#hiddenNetwork").checked,password=$("#password").value;
+  if(!label){notice("Give this network a friendly name such as Home or Hotspot.",true);return;}
+  const ssidBytes=encoder.encode(ssid).length;if(!ssid||ssidBytes>32){notice("The Wi‑Fi network name must be 1–32 bytes.",true);return;}
+  if(!validCountry(country)){notice("Use a real two-letter country code, such as US, CA, GB, or JP.",true);return;}
+  const id=editingId||safeId(label),dir=await profilesDir.getDirectoryHandle(id,{create:true});
+  try{
+    let psk="";
+    if(security!=="open"){
+      if(password)psk=await derivePsk(ssid,password);
+      else if(editingId){if(ssid!==editingOriginalSsid)throw new Error("Enter the Wi‑Fi password again when changing the network name.");psk=extractPsk(await readText(dir,"network.conf",""));if(!psk)throw new Error("Enter the Wi‑Fi password when changing or securing this network.");}
+      else throw new Error("Enter the Wi‑Fi password.");
+    }
+    const hex=ssidHex(ssid),block=networkBlock(hex,security,psk,hidden);
+    await writeText(dir,"label.txt",label+"\n");await writeText(dir,"ssid.txt",ssid+"\n");await writeText(dir,"ssid.hex",hex+"\n");await writeText(dir,"country.txt",country+"\n");await writeText(dir,"security.txt",security+"\n");await writeText(dir,"hidden.txt",(hidden?"1":"0")+"\n");
+    // Written last: the MiSTer script ignores any interrupted/incomplete profile.
+    await writeText(dir,"network.conf",block);
+    notice("Saved "+label+". Run wifi-swap.sh on MiSTer to connect.");$("#editor").classList.add("hidden");resetEditor();await refresh();await refreshImports();
+  }catch(e){console.error(e);notice(e.message||"Could not save the profile.",true);}
+};
+
+async function removeProfile(p){
+  if(!confirm(`Remove the Wifi-Swap profile “${p.label}”?\n\nThis removes only Wifi-Swap's copy. Run wifi-swap.sh once afterward to clean its marked block from the standard Wi-Fi configuration.`))return;
+  try{await profilesDir.removeEntry(p.id,{recursive:true});if(p.id===activeId){activeId="";await writeText(stateDir,"active","");}notice("Removed "+p.label+". Other official MiSTer Wi‑Fi networks are untouched.");await refresh();await refreshImports();}
+  catch(e){console.error(e);notice("Could not remove that profile.",true);}
+}
+</script>
+</body>
+</html>

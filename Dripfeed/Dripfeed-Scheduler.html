@@ -1,0 +1,1403 @@
+<!-- Dripfeed for MiSTer FPGA — GPL-3.0-or-later; Copyright (C) 2026 MikeyVids.
+     See LICENSE for the full license and CREDITS.md for upstream acknowledgements. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dripfeed Scheduler</title>
+<style>
+  :root{color-scheme:dark;
+    --bg:#0d1118; --panel:#171d28; --panel2:#101620; --line:#2b3445;
+    --text:#edf2fa; --dim:#9aa6b9; --accent:#69d5a5; --accent2:#67bde8;
+    --warn:#f3b94f; --bad:#ff7373; --radius:18px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:radial-gradient(circle at 10% 0,#172234 0,transparent 35%),var(--bg);color:var(--text);padding:24px}
+  .shell{max-width:920px;margin:auto}
+  h1,h2,h3,p{margin-top:0}h1{font-size:clamp(27px,4vw,40px);letter-spacing:-.03em;margin-bottom:5px}
+  .sub{color:var(--dim);margin:0 0 20px}.help{color:var(--dim);font-size:13px}
+  .eyebrow{color:var(--warn);font-weight:900;letter-spacing:.13em;text-transform:uppercase;font-size:11px}
+  .callout{border-left:3px solid var(--warn);padding:9px 12px;background:var(--panel2);border-radius:0 10px 10px 0}
+  .card{background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px;margin-bottom:16px;box-shadow:0 18px 45px #0003}
+  .step{display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--warn);font-weight:800;margin-bottom:14px}
+  .num{display:inline-flex;width:26px;height:26px;border-radius:50%;background:var(--panel2);
+    color:var(--accent);align-items:center;justify-content:center;font-weight:800}
+  button{font:inherit;cursor:pointer;border:none;border-radius:11px;padding:11px 16px;font-weight:800;min-height:42px}
+  button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+  .big{font-size:18px;padding:16px 22px}
+  .primary{background:var(--accent);color:#06271a}
+  .primary:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.4)}
+  .ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+  .ghost.sel{outline:2px solid var(--accent)}
+  select,input[type=text]{font:inherit;background:var(--panel2);color:var(--text);
+    border:1px solid var(--line);border-radius:10px;padding:11px 12px;width:100%}
+  label{display:block;color:var(--dim);font-size:13px;margin:0 0 6px}
+  .row{display:flex;gap:14px;flex-wrap:wrap} .row>*{flex:1;min-width:220px}
+  .games{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .game{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .game:last-child{border-bottom:none}
+  .game input{width:20px;height:20px;accent-color:var(--accent)}
+  .game label{margin:0;color:var(--text);font-size:15px;cursor:pointer;flex:1}
+  .game .tag{font-size:11px;color:var(--dim);background:var(--panel);padding:2px 7px;border-radius:6px}
+  .barrow{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  .cal{user-select:none}
+  .calhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .calhead b{font-size:17px}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .dow{color:var(--dim);font-size:12px;text-align:center;padding:4px 0}
+  .day{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:9px;
+    background:var(--panel2);border:1px solid transparent;cursor:pointer;font-size:15px;padding:0}
+  .day.empty{background:transparent;cursor:default}
+  .day.past{opacity:.35}
+  .day.today{border-color:var(--accent2)}
+  .day.sel{background:var(--accent);color:#06210f;font-weight:800}
+  .pill{display:inline-flex;align-items:center;background:var(--panel2);border:1px solid var(--line);
+    padding:5px 11px;border-radius:999px;font-size:13px;margin-right:8px}
+  .tabs{display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;padding-bottom:3px}
+  .tab{background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:9px 16px;border-radius:10px;cursor:pointer;flex:0 0 auto}
+  .tab.on{color:var(--text);border-color:var(--accent)}
+  .hidden{display:none}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--accent);
+    color:#06210f;font-weight:700;padding:14px 22px;border-radius:12px;box-shadow:0 8px 30px #0008;opacity:0;
+    transition:opacity .2s, transform .2s;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+  .toast.err{background:var(--bad);color:#2a0606}
+  .note{color:var(--warn);font-size:14px}
+  .qrow{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .qrow .d{font-variant-numeric:tabular-nums;color:var(--accent2);min-width:104px}
+  .qrow .n{flex:1}
+  .qrow .due{color:var(--warn);font-size:12px}
+  .game .tag.revealed{color:#fbbf24;background:#3a2a12}
+  .game .tag.available{color:var(--accent);background:#123326}
+  .game .tag.queued{color:var(--accent2);background:#122b3c}
+  .hint{color:var(--dim);font-size:12px;margin:8px 0 0}
+  .occ{color:var(--accent);font-size:13px;margin:6px 0 2px}
+  a{color:var(--accent2)}
+  .browser-warn{background:#321d22;border:1px solid var(--bad);color:#ffd9d9}
+  @media(max-width:680px){body{padding:12px}.card{padding:17px}.row>*{min-width:190px}.big{width:100%;font-size:16px}.pill{margin:10px 0 0}.tabs{margin-inline:-3px}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="card">
+    <div class="eyebrow">MiSTer FPGA · personal release calendar</div>
+    <h1>🎮 Dripfeed Scheduler</h1>
+    <p class="sub">Turn a big game library into a paced release calendar. Choose games already on your card, choose when they appear, and optionally add a short occasion message.</p>
+    <p class="callout help"><b>Your library stays local:</b> Dripfeed manages the waiting queue on your card. MiSTer reveals each game when its day arrives.</p>
+  </section>
+
+  <div id="browserWarn" class="card browser-warn hidden">
+    <b>This tool needs Chrome, Edge, Brave, or another Chromium browser.</b><br>
+    Safari and Firefox can't write to your SD card from a web page yet. Please re-open this file in Chrome or Edge.
+  </div>
+
+  <!-- STEP 1: CONNECT -->
+  <div class="card">
+    <div class="step"><span class="num">1</span> Connect your SD card</div>
+    <p class="sub" style="margin:0 0 14px">Insert the MiSTer SD card, then choose the <b>whole card</b> so scheduling, messages, and menu settings stay together. You can also choose only the <code>games</code> folder for basic scheduling.</p>
+    <button id="connectBtn" class="primary big">Connect SD card or games folder</button>
+    <span id="connStatus" class="pill" style="margin-left:12px">Not connected</span>
+    <p class="sub" style="font-size:13px;margin:12px 0 0">Choose the folder itself and click <b>Open / Select</b>. Individual files look greyed out because the browser is asking for a folder; your game list appears here after connecting.</p>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;color:var(--dim);font-size:13px">Advanced: folder names &amp; staging</summary>
+      <div class="row" style="margin-top:10px;align-items:flex-end">
+        <div style="flex:0 0 220px">
+          <label>Hidden waiting-library folder (must start with “.”)</label>
+          <input id="stageName" type="text" value=".dripfeed-library">
+        </div>
+        <div style="flex:0 0 auto"><button id="stageApply" class="ghost">Apply</button></div>
+      </div>
+      <p class="sub" style="font-size:12px;margin:8px 0 0">Scheduled games wait outside <code>games/</code>, grouped by system (for example <code>.dripfeed-library/SNES/</code>). That keeps held-back titles out of ordinary game-library scans. Existing <code>games/SYSTEM/.dripfeed/</code> queues are still read safely after an upgrade.</p>
+      <div class="row" style="margin-top:14px;gap:18px;flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)">
+          <input id="cfgShowcase" type="checkbox" checked> build the Dripfeed "What's New" folder
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)">
+          <input id="cfgGotmOn" type="checkbox" checked> build GOT'eM (Game of the Month) folder(s)
+        </label>
+      </div>
+      <p class="sub" style="font-size:12px;margin:4px 0 0">Use either, both, or neither — scheduling and reveals work regardless; these only control the menu folders Dripfeed builds.</p>
+      <div class="row" style="margin-top:16px;align-items:flex-end;flex-wrap:wrap;gap:10px">
+        <div style="flex:0 0 240px">
+          <label>Dripfeed menu folder name</label>
+          <input id="cfgPrefix" type="text" placeholder="_Dripfeed - ">
+        </div>
+        <div style="flex:0 0 auto;padding-bottom:6px">
+          <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+            <input id="cfgShowDate" type="checkbox" checked> include date of latest Dripfeed
+          </label>
+        </div>
+        <div style="flex:0 0 240px">
+          <label>GOT'eM folder name</label>
+          <input id="cfgGotm" type="text" placeholder="_Game of the Month">
+        </div>
+        <div style="flex:0 0 auto;padding-bottom:6px">
+          <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+            <input id="cfgGotmMonth" type="checkbox"> include month (<code>&nbsp;- Aug</code>)
+          </label>
+        </div>
+        <div style="flex:0 0 auto"><button id="cfgApply" class="ghost">Save folder names</button></div>
+      </div>
+      <p class="sub" id="cfgLimits" style="font-size:12px;margin:6px 0 0"></p>
+      <p class="sub" style="font-size:12px;margin:8px 0 0">Names are cleaned automatically: emojis and characters MiSTer can't show are removed, a leading <code>_</code> is added if missing (folders need it to appear in the menu; <code>_@</code> pins to the top). With the date toggle ON the Dripfeed folder is named for the <b>latest Dripfeed</b> (e.g. <code>_Dripfeed - New Fri Jul 3, 26</code>) — it only ever renames when a game actually unlocks, never on a plain power-on, and never sits empty-dated. Toggle OFF for a fixed name. The MiSTer menu shows ~30 characters, so the length limits below adjust to leave room for whatever the toggles add.</p>
+    </details>
+  </div>
+
+  <div id="main" class="hidden">
+    <div class="tabs" role="tablist" aria-label="Scheduler sections">
+      <button type="button" role="tab" aria-selected="true" class="tab on" data-tab="schedule">➕ Schedule games</button>
+      <button type="button" role="tab" aria-selected="false" class="tab" data-tab="import">📄 Import CSV</button>
+      <button type="button" role="tab" aria-selected="false" class="tab" data-tab="queue">📅 Dripfeed schedule (<span id="queueCount">0</span>)</button>
+      <button type="button" role="tab" aria-selected="false" class="tab" data-tab="gotm">🏆 GOT'eM</button>
+    </div>
+
+    <!-- SCHEDULE TAB -->
+    <div id="tab-schedule">
+      <div class="card">
+        <div class="step"><span class="num">2</span> Choose games</div>
+        <p class="sub" style="margin:-6px 0 12px;font-size:13px">Switch systems freely — your picks stay in one selection, so you can batch games from several cores together and give them all the same date.
+        <br><b>Note:</b> unlocks happen on the console, and only once it has a trusted clock (network time or RTC) after power-on — so a game appears the first time the console is on during/after its date.</p>
+        <div class="row" style="margin-bottom:12px">
+          <div style="flex:0 0 240px"><label>System</label><select id="systemSel"></select></div>
+          <div><label>Search</label><input id="search" type="text" placeholder="Type to filter…"></div>
+        </div>
+        <div class="barrow">
+          <button class="ghost" id="selAll">Select all shown</button>
+          <button class="ghost" id="selAllSystems">Select all systems</button>
+          <button class="ghost" id="selInvert">Invert shown</button>
+          <button class="ghost" id="selNone">Clear selection</button>
+          <span class="pill" id="selCount">0 selected</span>
+        </div>
+        <label class="hint" style="display:flex;align-items:center;gap:7px;cursor:pointer;color:var(--text)">
+          <input id="allowRehide" type="checkbox"> Allow re-hide of already unveiled games (explicit override)
+        </label>
+        <p class="hint">For a “hide nearly everything” setup: select all systems, untick the few games you want visible, then schedule the remaining selection. Already unveiled games stay protected unless you turn on the override.</p>
+        <div class="games" id="gameList"></div>
+      </div>
+
+      <div class="card">
+        <div class="step"><span class="num">3</span> Choose the day &amp; (optional) message</div>
+        <div class="row">
+          <div>
+            <div class="cal">
+              <div class="calhead">
+                <button class="ghost" id="prevMonth">‹</button>
+                <b id="monthLabel"></b>
+                <button class="ghost" id="nextMonth">›</button>
+              </div>
+              <div class="grid" id="dow"></div>
+              <div class="grid" id="days"></div>
+            </div>
+            <div class="barrow" style="margin-top:10px">
+              <button class="ghost" data-quick="0">Today</button>
+              <button class="ghost" data-quick="1">Tomorrow</button>
+              <button class="ghost" data-quick="7">+1 week</button>
+              <button class="ghost" data-quick="30">+1 month</button>
+            </div>
+          </div>
+          <div>
+            <label>Custom banner for this day (optional)</label>
+            <input id="message" type="text" placeholder="e.g. Happy Birthday Player One">
+            <p class="sub" style="font-size:13px;margin-top:8px">When the games unlock that day, this renames the "What's New" menu folder (e.g. <code>_Dripfeed - Happy Birthday Deme</code>, trimmed to fit the screen) and it <b>stays until the next unlock</b> — powering the console on never renames it. Also shows in full on the on-screen banner and in <code>gamelist.xml</code> for graphical frontends. <span id="msgCount" style="color:var(--accent2)"></span></p>
+            <div class="card" style="background:var(--panel2);margin-top:8px">
+              <div style="color:var(--dim);font-size:13px">Selected day</div>
+              <div id="dateEcho" style="font-size:20px;font-weight:700;margin-top:4px">—</div>
+              <div id="pastNote" class="note hidden" style="margin-top:6px">⚠ In the past — these will appear right away.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="text-align:center">
+        <button id="scheduleBtn" class="primary big" disabled>Schedule selected games</button>
+        <div id="planLine" class="sub" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <!-- IMPORT TAB -->
+    <div id="tab-import" class="hidden">
+      <div class="card">
+        <div class="step"><span class="num">⇪</span> Bulk import from CSV</div>
+        <p class="sub" style="font-size:13px;margin:-4px 0 12px">
+          Columns: <code>path, date, message</code> — where <b>path</b> is relative to your
+          games folder (e.g. <code>MegaDrive/Shiny Forts.md</code>), <b>date</b> is the
+          unlock date (<code>YYYY-MM-DD</code> or <code>M/D/YYYY</code>), and <b>message</b> is
+          an optional banner. A header row is recognized automatically. You can also drop a
+          whole multi-disc folder path (e.g. <code>Saturn/Shiny Forts III</code>).
+          <b>GOT'eM rows ride the same file</b>: put a <i>month</i> in the date column
+          (<code>2026-08</code> or <code>8/2026</code>) and the row becomes that month's
+          Game of the Month pick (message column = optional shortcut label; <code>_Arcade/…mra</code> allowed).
+          <b>Any columns after the first three are reference-only and ignored</b> — keep
+          <code>genre, console, players, hours_to_beat, series, release_date</code> (or
+          anything else) in your master spreadsheet and import the same file as-is.
+        </p>
+        <div class="barrow">
+          <button class="ghost" id="csvChoose">Choose CSV file…</button>
+          <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none">
+          <button class="ghost" id="csvTemplate">Download blank template</button>
+          <button class="ghost" id="csvExport">Export schedule → CSV</button>
+        </div>
+        <label style="margin-top:10px">…or paste CSV here</label>
+        <textarea id="csvPaste" rows="5" style="width:100%;font:13px monospace;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px" placeholder="path,date,message&#10;MegaDrive/Shiny Forts.md,2026-07-10,&#10;Saturn/Shiny Forts III,2027-05-25,Happy Towel Day!"></textarea>
+        <div class="barrow" style="margin-top:8px">
+          <button class="primary" id="csvReview">Review</button>
+          <span class="pill" id="csvSummary"></span>
+        </div>
+        <div id="csvTable" style="margin-top:12px"></div>
+        <div class="barrow" id="csvApplyRow" style="margin-top:12px;display:none">
+          <button class="primary big" id="csvApply">Schedule the OK rows</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- QUEUE TAB -->
+    <!-- GAME OF THE MONTH TAB -->
+    <div id="tab-gotm" class="hidden">
+      <div class="card">
+        <div class="step"><span class="num">🏆</span> GOT'eM — the Game of the Month scheduler</div>
+        <p class="sub" style="font-size:13px;margin:-4px 0 12px">
+          Creates a <code>_Game of the Month</code> folder in the MiSTer menu with a shortcut
+          to your pick — consoles, handhelds, computers, and <b>arcade</b> (.mra) all work.
+          The game itself is <b>never renamed or moved</b>: visible games stay visible, and a
+          pick that's still scheduled/hidden appears automatically the day Dripfeed reveals it.
+          One pick per month; the folder rebuilds when the month rolls over.</p>
+        <div class="barrow" style="gap:8px;flex-wrap:wrap">
+          <input id="gotmMonth" type="month">
+          <select id="gotmSys"></select>
+          <input id="gotmSearch" type="text" placeholder="search games…" style="max-width:220px">
+          <input id="gotmLabel" type="text" placeholder="custom shortcut label (optional)" style="max-width:260px">
+        </div>
+        <select id="gotmGame" size="10" style="width:100%;margin-top:8px"></select>
+        <div class="barrow" style="margin-top:10px">
+          <button class="primary" id="gotmSave">Set GOT'eM pick</button>
+        </div>
+        <div class="step" style="margin-top:18px"><span class="num">📜</span> Current picks</div>
+        <div id="gotmList"></div>
+      </div>
+    </div>
+
+    <div id="tab-queue" class="hidden">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div class="step" style="margin:0"><span class="num">★</span> Scheduled &amp; waiting</div>
+          <div style="display:flex;gap:8px">
+            <button id="exportCsv" class="ghost">📄 Export CSV</button>
+            <button id="exportIcs" class="ghost">📆 Export .ics</button>
+          </div>
+        </div>
+        <div id="queueList" style="margin-top:14px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</main>
+
+<script>
+"use strict";
+const DATE_RE = /^\d{4}-\d{2}-\d{2}_/;
+let STAGE=".dripfeed";               // legacy per-system queue (read/upgrade only)
+let STAGE_ROOT_NAME=".dripfeed-library";
+let sdRoot=null, gamesDir=null, stageRoot=null, stateDir=null, stateIsConsole=false;
+let systems=[];           // [{name, handle}]
+let currentGames=[];      // [{name, handle, kind}]
+let basket=new Map();     // "sys\x1fname" -> {sys,name,kind}  (persists across systems)
+const keyOf=(s,n)=>s+String.fromCharCode(31)+n;
+let revealedKeys=new Set(); // card-side revealed.tsv ledger
+let allowRehide=false;      // explicit override for re-dating a revealed game
+let selDate=null;         // {y,m,d}
+let viewY, viewM;
+
+// ---------- helpers ----------
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="toast show"+(err?" err":"");
+  setTimeout(()=>t.className="toast",err?3800:2200);}
+function pad(n){return String(n).padStart(2,"0");}
+function iso(d){return d.y+"-"+pad(d.m+1)+"-"+pad(d.d);}
+function todayObj(){const n=new Date();return {y:n.getFullYear(),m:n.getMonth(),d:n.getDate()};}
+function dToNum(d){return d.y*10000+(d.m+1)*100+d.d;}
+function stripPrefix(n){return DATE_RE.test(n)?n.slice(11):n;}
+function fmtLong(d){return new Date(d.y,d.m,d.d).toLocaleDateString(undefined,
+  {weekday:"short",month:"short",day:"numeric",year:"numeric"});}
+
+// CSV speaks in paths relative to games/; gotm.tsv speaks in paths relative
+// to /media/fat. Keep that conversion at this one boundary. Accept the older
+// games/System/File CSV form when re-importing, but always export the canonical
+// System/File form. _Arcade is already /media/fat-relative and stays unchanged.
+function gotmCsvPath(path){
+  const p=String(path||"").trim();
+  return /^games\//i.test(p)?p.slice(6):p;
+}
+function gotmStatePath(path){
+  const p=gotmCsvPath(path);
+  return /^_Arcade\//i.test(p)?p:"games/"+p;
+}
+
+// ---------- File System Access ----------
+// Moves prefer handle.move() — a true same-filesystem RENAME: the file's data is
+// never rewritten, so it is instant and cannot corrupt a ROM. The copy+delete
+// fallback (older browsers) is guarded by a FAILSAFE: the copy's byte size is
+// verified BEFORE the original is deleted, and a partial copy is removed on any
+// failure — a ROM can never be lost or left half-written.
+async function moveFile(srcDir,name,destDir,newName){
+  // Refuse both file and directory collisions before using move() or the
+  // copy fallback. A browser's {create:true} must never clobber a ROM.
+  try{await destDir.getFileHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
+  try{await destDir.getDirectoryHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
+  const h=await srcDir.getFileHandle(name);
+  if(typeof h.move==="function"){try{await h.move(destDir,newName);return;}catch(e){}}
+  const f=await h.getFile();
+  try{
+    const dh=await destDir.getFileHandle(newName,{create:true});
+    const w=await dh.createWritable(); await f.stream().pipeTo(w);
+    const copied=await (await destDir.getFileHandle(newName)).getFile();
+    if(copied.size!==f.size) throw new Error("size mismatch after copy ("+copied.size+" vs "+f.size+")");
+  }catch(e){ try{await destDir.removeEntry(newName);}catch(_){ } throw e; }
+  await srcDir.removeEntry(name);
+}
+// macOS scatters AppleDouble junk ("._foo", ".DS_Store") on FAT cards; it can be
+// unreadable/stale and MUST NOT abort a folder move, nor count toward verification.
+function isJunk(n){ return n.startsWith("._")||n===".DS_Store"; }
+async function moveDir(srcParent,name,destParent,newName){
+  try{await destParent.getDirectoryHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
+  try{await destParent.getFileHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
+  const h=await srcParent.getDirectoryHandle(name);
+  // Multi-disc folders must move as one filesystem rename. A recursive
+  // browser copy can be interrupted halfway and leave two misleading folders;
+  // refusing that fallback is safer than risking a playable-looking partial set.
+  if(typeof h.move!=="function")throw new Error("This browser cannot safely move a multi-disc folder in limited mode. Reconnect the whole SD card so MiSTer can perform the atomic move.");
+  try{await h.move(destParent,newName);}
+  catch(e){throw new Error("The multi-disc folder was not changed. Reconnect the whole SD card and try again ("+(e&&e.name||"move failed")+").");}
+}
+async function stageDirFor(sys){
+  if(stageRoot)return await stageRoot.getDirectoryHandle(sys.name,{create:true});
+  return await sys.handle.getDirectoryHandle(STAGE,{create:true});
+}
+async function stageDirsFor(sys){
+  const out=[];
+  if(stageRoot){try{out.push(await stageRoot.getDirectoryHandle(sys.name));}catch(e){}}
+  try{const legacy=await sys.handle.getDirectoryHandle(STAGE);if(!out.includes(legacy))out.push(legacy);}catch(e){}
+  return out;
+}
+
+// State (occasions.tsv etc.) must live where the on-console engine reads it:
+// /media/fat/Scripts/.dripfeed/. Falls back to a local folder only if Scripts is
+// unreachable (e.g. you picked a games-only or flat test folder).
+async function getStateDir(root){
+  try{ const sc=await root.getDirectoryHandle("Scripts"); stateIsConsole=true; return await sc.getDirectoryHandle(".dripfeed",{create:true}); }
+  catch(e){ stateIsConsole=false; return await root.getDirectoryHandle(".dripfeed_state",{create:true}); }
+}
+
+async function readRevealLedger(){
+  revealedKeys=new Set();
+  try{
+    const fh=await stateDir.getFileHandle("revealed.tsv");
+    const t=await(await fh.getFile()).text();
+    t.split(/\r?\n/).forEach(line=>{const p=line.split("\t");if(p.length>=3)revealedKeys.add(keyOf(p[1],p[2]));});
+  }catch(e){}
+}
+
+async function readOccasions(){
+  const map={};
+  try{const fh=await stateDir.getFileHandle("occasions.tsv");const t=await(await fh.getFile()).text();
+    t.split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
+  }catch(e){}
+  return map;
+}
+async function writeOccasion(date,message){
+  const map=await readOccasions();
+  if(message&&message.trim())map[date]=message.trim(); else delete map[date];
+  const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
+  const fh=await stateDir.getFileHandle("occasions.tsv",{create:true});
+  const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+}
+function requestKey(sys,name){return sys+"\x1f"+name;}
+function requestSafe(value){return value&&!/[\t\r\n\\/]/.test(value);}
+async function readMoveRequests(file,withDate){
+  const rows=[];
+  try{const fh=await stateDir.getFileHandle(file);const t=await(await fh.getFile()).text();
+    t.split(/\r?\n/).forEach(line=>{if(!line)return;const p=line.split("\t");
+      if(withDate&&p.length===3)rows.push({date:p[0],sys:p[1],name:p[2]});
+      if(!withDate&&p.length===2)rows.push({sys:p[0],name:p[1]});});
+  }catch(e){}
+  return rows;
+}
+async function writeMoveRequests(file,rows,withDate){
+  const lines=rows.map(r=>withDate?[r.date,r.sys,r.name].join("\t"):[r.sys,r.name].join("\t"));
+  const fh=await stateDir.getFileHandle(file,{create:true});const w=await fh.createWritable();
+  await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+}
+async function requestSchedule(date,sys,name){
+  if(!stateIsConsole)throw new Error("whole SD card required for safe card-side move");
+  if(!requestSafe(sys)||!requestSafe(name))throw new Error("name contains an unsupported tab, slash, or newline");
+  const rows=(await readMoveRequests("schedule-requests.tsv",true)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
+  rows.push({date,sys,name});await writeMoveRequests("schedule-requests.tsv",rows,true);
+  const undo=(await readMoveRequests("unschedule-requests.tsv",false)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
+  await writeMoveRequests("unschedule-requests.tsv",undo,false);
+}
+async function cancelScheduleRequest(sys,name){
+  const rows=(await readMoveRequests("schedule-requests.tsv",true)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
+  await writeMoveRequests("schedule-requests.tsv",rows,true);
+}
+async function requestUnschedule(sys,name){
+  if(!stateIsConsole)throw new Error("whole SD card required for safe card-side move");
+  await cancelScheduleRequest(sys,name);
+  const rows=(await readMoveRequests("unschedule-requests.tsv",false)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
+  rows.push({sys,name});await writeMoveRequests("unschedule-requests.tsv",rows,false);
+}
+
+// ---------- connection-loss recovery (step-by-step reconnect) ----------
+// Folder handles go stale when the SD card is ejected, the folder is moved/renamed,
+// or the browser revokes permission. Any such error routes here and walks the user
+// through reconnecting, then re-checks whatever they were doing (CSV review, queue).
+function isConnError(e){return !!e&&["NotFoundError","NotAllowedError","SecurityError","InvalidStateError"].includes(e.name);}
+// A file-level error (one unreadable entry) is NOT a lost connection. Probe the real
+// connection before blaming it, so users aren't sent on a pointless reconnect.
+async function connAlive(){
+  try{ for await(const _ of gamesDir.entries()){ break; } return true; }
+  catch(e){ return false; }
+}
+function guideReconnect(title,extra){
+  if(document.getElementById("reconnModal"))return;
+  const d=document.createElement("div");d.id="reconnModal";
+  d.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:999;padding:16px";
+  d.innerHTML=`<div style="background:var(--panel,#1b2130);border:1px solid var(--line,#333);border-radius:14px;max-width:540px;padding:22px 24px;color:var(--text,#eee)">
+    <h3 style="margin:0 0 6px">⚠ ${title}</h3>
+    ${extra?`<p class="sub" style="margin:0 0 12px">${extra}</p>`:""}
+    <ol style="margin:0 0 14px 18px;line-height:1.7">
+      <li>If the SD card was ejected or the folder moved, plug it back in / restore it and wait for it to appear.</li>
+      <li>Click <b>Reconnect folder</b> below.</li>
+      <li>Pick the <b>same folder as before</b> — the whole SD card is best (the folder that <i>contains</i> <code>games</code>), or your <code>games</code> folder itself.</li>
+      <li>Done — the queue refreshes, and a CSV mid-import is re-reviewed automatically.</li>
+    </ol>
+    <div style="display:flex;gap:10px">
+      <button class="primary" id="reconnGo">Reconnect folder</button>
+      <button class="ghost" id="reconnClose">Not now</button>
+    </div></div>`;
+  document.body.appendChild(d);
+  d.querySelector("#reconnClose").onclick=()=>d.remove();
+  d.querySelector("#reconnGo").onclick=async()=>{
+    d.remove();
+    await connectFlow();
+    const t=$("#csvPaste").value.trim();
+    if(t&&!$("#tab-import").classList.contains("hidden"))await csvReview(t);
+  };
+}
+window.addEventListener("unhandledrejection",e=>{
+  if(isConnError(e.reason)){e.preventDefault();guideReconnect("Lost access to the connected folder");}
+});
+
+// ---------- connect ----------
+// FAILSAFE: the File System Access API (folder picking + moving files) only exists
+// in Chromium browsers. Say so up front instead of a dead button.
+if(!window.showDirectoryPicker){
+  $("#connectBtn").disabled=true;
+  $("#connStatus").textContent="⚠ This browser can't open folders. Please use Chrome, Edge, or Brave on a computer.";
+}
+async function connectFlow(){
+  try{
+    const picked=await window.showDirectoryPicker({mode:"readwrite",id:"dripfeed-sd"});
+    // Inspect what was picked.
+    let g=null; try{g=await picked.getDirectoryHandle("games");}catch(e){}
+    let hasDir=false,hasFile=false;
+    for await(const [n,h] of picked.entries()){
+      if(n.startsWith("."))continue;
+      if(h.kind==="directory")hasDir=true; else hasFile=true;
+      if(hasDir&&hasFile)break;
+    }
+
+    if(g){
+      // CASE A: the whole SD card (contains a games/ folder).
+      sdRoot=picked; gamesDir=g;
+      stageRoot=await picked.getDirectoryHandle(STAGE_ROOT_NAME,{create:true});
+      stateDir=await getStateDir(picked);
+      await systemsFromGames(gamesDir);
+    } else if(hasDir){
+      // CASE B: the games/ folder itself (contains system subfolders).
+      sdRoot=picked; gamesDir=picked;
+      // Without the card root we cannot create /media/fat/.dripfeed-library or
+      // update the console's Scripts/.dripfeed config. Keep this limited mode
+      // on the legacy per-system queue, which the console engine still reads.
+      stageRoot=null;
+      stateDir=await getStateDir(picked);
+      await systemsFromGames(gamesDir);
+      toast("Limited mode: pick the whole SD card to keep waiting games outside games/.");
+    } else if(hasFile){
+      // CASE C: a single folder of ROMs — treat it as one system (great for testing).
+      sdRoot=picked; gamesDir=picked;
+      stageRoot=null;
+      systems=[{name:picked.name,handle:picked}];
+      stateDir=await getStateDir(picked);
+      populateSystemDropdown();
+      await loadGames(picked.name);
+      toast('Loaded "'+picked.name+'" as one system.');
+    } else {
+      toast("That folder is empty. Pick your SD card (or a folder with ROMs).",true);
+      return;
+    }
+
+    await readRevealLedger();
+    $("#connStatus").textContent="✓ games: "+(gamesDir?gamesDir.name:"?")+" · "+systems.length+" systems";
+    $("#main").classList.remove("hidden");
+    selectDate(todayObj());
+    buildCalendar();
+    await refreshQueue();
+    try{await cfgLoad();}catch(e){}
+    if(g||hasDir)toast(stateIsConsole?"Connected — "+systems.length+" systems found.":"Connected games folder (local-only state; choose the whole SD card for console messages/GOT'eM).");
+  }catch(e){if(e&&e.name!=="AbortError"){console.error(e);toast("Connection cancelled or failed.",true);}}
+}
+$("#connectBtn").onclick=connectFlow;
+
+function populateSystemDropdown(){
+  const sel=$("#systemSel");sel.innerHTML="";
+  systems.forEach(s=>{const o=document.createElement("option");o.value=s.name;o.textContent=s.name;sel.appendChild(o);});
+}
+async function systemsFromGames(dirHandle){
+  systems=[];
+  for await(const [name,h] of dirHandle.entries()){
+    if(h.kind==="directory"&&!name.startsWith("."))systems.push({name,handle:h});
+  }
+  systems.sort((a,b)=>a.name.localeCompare(b.name));
+  populateSystemDropdown();
+  if(systems.length)await loadGames(systems[0].name);
+}
+// Support files (BIOS, boot ROMs, firmware region folders, art folders, …) are
+// hidden from the game list. MegaCD is the important edge case: its USA/Japan/
+// Europe folders contain BIOS firmware, not games. Inspect folders instead of
+// treating every directory as a multi-disc game, so firmware cannot be moved into
+// .dripfeed by accident. A "show system files" link reveals them at any time.
+let showSysFiles=false;
+const SYSFILE_DIRS=new Set(["media","palettes","borders","cores"]);
+const FIRMWARE_DIR_NAMES=new Set(["bios","firmware","firmwares","usa","japan","europe"]);
+const SYSFILE_NAMES=new Set(["gamelist.xml","n64-database.txt","sbi.zip","000-lo.lo","sfix.sfix",
+  "uni-bios.rom","cd_bios.rom","bsx_bios.rom","neo-epo.sp1","sp-s2.sp1","eeprom.jce",
+  "memorytrack.jmc","romsets.xml","gog-romsets.xml","gog-broken-romsets.xml"]);
+const GAME_EXTS=new Set([".adf",".a26",".bin",".cdi",".chd",".cue",".crt",".d64",".d81",
+  ".dsk",".gb",".gba",".gbc",".gen",".img",".iso",".j64",".jag",".m3u",".md",
+  ".mdf",".mra",".nes",".pce",".pbp",".prg",".rom",".sfc",".smc",".sms",".sna",".tap",
+  ".t64",".tzx",".v64",".vfd",".vhd",".z80",".zip",".7z"]);
+function isFirmwareOrSupportFile(name){
+  const n=String(name||"").toLowerCase();
+  if(SYSFILE_NAMES.has(n)||n.endsWith(".mrq"))return true; // Jaguar marquee support, not a ROM
+  if(/^boot\d*\.(rom|bin)$/.test(n)||n.startsWith("mister-boot.")||n.startsWith("mister-demo."))return true;
+  if(/(?:^|[_-])bios?(?:[_-]|\.)/.test(n)||n.endsWith("_bios.rom"))return true;
+  if(n.endsWith(".jce")||n.endsWith(".jmc"))return true;
+  return false;
+}
+function isPlayableFile(name){
+  const n=String(name||"").toLowerCase(), dot=n.lastIndexOf(".");
+  return dot>0&&GAME_EXTS.has(n.slice(dot))&&!isFirmwareOrSupportFile(n);
+}
+function isSystemFile(name,kind){
+  const n=name.toLowerCase();
+  if(kind==="directory") return SYSFILE_DIRS.has(n);
+  return isFirmwareOrSupportFile(n);
+}
+async function inspectFolder(handle,depth=4){
+  // A folder is a game only when it contains a known playable image. A folder
+  // containing only BIOS/firmware/support files is never schedulable.
+  let hasEntries=false,playable=false,onlySupport=true,unreadable=false;
+  try{
+    for await(const [name,h] of handle.entries()){
+      if(name.startsWith("."))continue;
+      hasEntries=true;
+      if(h.kind==="file"){
+        if(isPlayableFile(name))playable=true;
+        else if(!isFirmwareOrSupportFile(name))onlySupport=false;
+      }else if(depth>0){
+        const child=await inspectFolder(h,depth-1);
+        if(child.playable)playable=true;
+        if(!child.onlySupport)onlySupport=false;
+      }else onlySupport=false;
+    }
+  }catch(e){unreadable=true;onlySupport=false;}
+  return {hasEntries,playable,onlySupport,unreadable};
+}
+async function classifyEntry(name,handle){
+  if(isSystemFile(name,handle.kind))return {sysfile:true,reason:"firmware/support file"};
+  if(handle.kind!=="directory")return {sysfile:false,reason:""};
+  const summary=await inspectFolder(handle),lower=name.toLowerCase();
+  if(FIRMWARE_DIR_NAMES.has(lower)&&!summary.playable)return {sysfile:true,reason:"firmware folder"};
+  if(!summary.playable)return {sysfile:true,reason:summary.onlySupport?"firmware/support folder":"non-game folder"};
+  return {sysfile:false,reason:""};
+}
+async function loadGames(sysName){
+  currentGames=[];
+  const sys=systems.find(s=>s.name===sysName);if(!sys)return;
+  for await(const [name,h] of sys.handle.entries()){
+    if(name.startsWith("."))continue;   // skip .dripfeed, .dripfeed_state, .DS_Store, etc.
+    const info=await classifyEntry(name,h);
+    currentGames.push({name,handle:h,kind:h.kind,sysfile:info.sysfile,systemReason:info.reason,revealed:revealedKeys.has(keyOf(sysName,name))});
+  }
+  currentGames.sort((a,b)=>a.name.localeCompare(b.name));
+  renderGames();
+}
+function renderGames(){
+  const sys=$("#systemSel").value;
+  const q=$("#search").value.toLowerCase();
+  const list=$("#gameList");list.innerHTML="";
+  const matches=currentGames.filter(g=>g.name.toLowerCase().includes(q));
+  const shown=matches.filter(g=>showSysFiles||!g.sysfile);
+  const hiddenN=matches.length-shown.length;
+  if(!shown.length){list.innerHTML='<div class="game"><label style="color:var(--dim)">No games here (or none match).</label></div>';}
+  if(hiddenN>0||showSysFiles){
+    const t=document.createElement("div");t.className="game";
+    const unit=hiddenN===1?"y":"ies";
+    t.innerHTML=`<label style="color:var(--dim);cursor:pointer;font-size:12px">${showSysFiles?"▾ hiding firmware/support again":"▸ "+hiddenN+" firmware/support entr"+unit+" hidden (BIOS / boot / art) — show"}</label>`;
+    t.onclick=()=>{showSysFiles=!showSysFiles;renderGames();};
+    list.appendChild(t);
+  }
+  shown.forEach(g=>{
+    const row=document.createElement("div");row.className="game";
+    const id="g_"+btoa(unescape(encodeURIComponent(g.name))).replace(/=/g,"");
+    const k=keyOf(sys,g.name);
+    const protectedGame=g.revealed&&!allowRehide;
+    row.innerHTML=`<input type="checkbox" id="${id}" ${basket.has(k)?"checked":""} ${protectedGame?"disabled":""}>
+      <label for="${id}">${g.name.replace(/</g,"&lt;")}</label>
+      ${g.kind==="directory"?'<span class="tag">multi-disc</span>':""}
+      <span class="tag ${g.revealed?"revealed":"available"}">${g.revealed?"unveiled":"available"}</span>`;
+    row.querySelector("input").onchange=e=>{e.target.checked?basket.set(k,{sys,name:g.name,kind:g.kind}):basket.delete(k);updateSel();};
+    list.appendChild(row);
+  });
+  updateSel();
+}
+function updateSel(){
+  const sysSet=new Set([...basket.values()].map(i=>i.sys));
+  $("#selCount").textContent=basket.size+" selected"+(sysSet.size>1?" · "+sysSet.size+" systems":"");
+  updatePlan();
+}
+$("#systemSel").onchange=e=>loadGames(e.target.value);
+$("#search").oninput=renderGames;
+$("#selAll").onclick=()=>{const sys=$("#systemSel").value;const q=$("#search").value.toLowerCase();
+  // Only select what is actually SHOWN — never system files or unveiled games
+  // unless the explicit override is enabled.
+  currentGames.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide))
+    .forEach(g=>basket.set(keyOf(sys,g.name),{sys,name:g.name,kind:g.kind}));renderGames();};
+$("#selAllSystems").onclick=async()=>{const old=$("#systemSel").value,q=$("#search").value.toLowerCase();
+  for(const s of systems){await loadGames(s.name);currentGames.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide))
+    .forEach(g=>basket.set(keyOf(s.name,g.name),{sys:s.name,name:g.name,kind:g.kind}));}
+  await loadGames(old);toast("Selected eligible games across all systems.");};
+$("#selInvert").onclick=()=>{const sys=$("#systemSel").value,q=$("#search").value.toLowerCase();
+  currentGames.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide)).forEach(g=>{
+    const k=keyOf(sys,g.name);basket.has(k)?basket.delete(k):basket.set(k,{sys,name:g.name,kind:g.kind});});renderGames();};
+$("#selNone").onclick=()=>{basket.clear();renderGames();};
+$("#allowRehide").onchange=e=>{allowRehide=e.target.checked;renderGames();
+  if(allowRehide)toast("Override on: unveiled games can be re-hidden and re-dated.");};
+
+// ---------- calendar ----------
+const DOW=["Su","Mo","Tu","We","Th","Fr","Sa"];
+function buildCalendar(){
+  $("#dow").innerHTML=DOW.map(d=>`<div class="dow">${d}</div>`).join("");
+  if(viewY===undefined){const t=todayObj();viewY=t.y;viewM=t.m;}
+  renderCalendar();
+}
+function renderCalendar(){
+  $("#monthLabel").textContent=new Date(viewY,viewM,1).toLocaleDateString(undefined,{month:"long",year:"numeric"});
+  const first=new Date(viewY,viewM,1).getDay();
+  const days=new Date(viewY,viewM+1,0).getDate();
+  const tNum=dToNum(todayObj());
+  const cells=[];
+  for(let i=0;i<first;i++)cells.push('<div class="day empty" aria-hidden="true"></div>');
+  for(let d=1;d<=days;d++){
+    const o={y:viewY,m:viewM,d};const num=dToNum(o);
+    let cls="day";if(num<tNum)cls+=" past";if(num===tNum)cls+=" today";
+    if(selDate&&selDate.y===o.y&&selDate.m===o.m&&selDate.d===o.d)cls+=" sel";
+    const label=new Date(viewY,viewM,d).toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
+    cells.push(`<button type="button" class="${cls}" data-d="${d}" aria-label="${label}">${d}</button>`);
+  }
+  $("#days").innerHTML=cells.join("");
+  $$("#days .day:not(.empty)").forEach(el=>el.onclick=()=>selectDate({y:viewY,m:viewM,d:+el.dataset.d}));
+}
+$("#prevMonth").onclick=()=>{viewM--;if(viewM<0){viewM=11;viewY--;}renderCalendar();};
+$("#nextMonth").onclick=()=>{viewM++;if(viewM>11){viewM=0;viewY++;}renderCalendar();};
+function selectDate(d){selDate=d;viewY=d.y;viewM=d.m;
+  $("#dateEcho").textContent=fmtLong(d);
+  $("#pastNote").classList.toggle("hidden",dToNum(d)>=dToNum(todayObj()));
+  renderCalendar();updatePlan();}
+$$("[data-quick]").forEach(b=>b.onclick=()=>{const n=new Date();n.setDate(n.getDate()+ +b.dataset.quick);
+  selectDate({y:n.getFullYear(),m:n.getMonth(),d:n.getDate()});});
+
+function updatePlan(){
+  const ok=basket.size>0&&selDate;
+  $("#scheduleBtn").disabled=!ok;
+  if(!ok){$("#planLine").textContent="Pick at least one game (from any number of systems) and a day.";return;}
+  const bySys={};[...basket.values()].forEach(i=>{(bySys[i.sys]=bySys[i.sys]||[]).push(i.name);});
+  const parts=Object.keys(bySys).sort().map(s=>s+" ("+bySys[s].length+")");
+  $("#planLine").textContent=`${basket.size} game${basket.size>1?"s":""} across ${parts.join(", ")} → will appear on ${fmtLong(selDate)}`;
+}
+
+// ---------- schedule ----------
+$("#scheduleBtn").onclick=async()=>{
+  if(!basket.size||!selDate)return;
+  const date=iso(selDate);
+  const btn=$("#scheduleBtn");btn.disabled=true;btn.textContent="Scheduling…";
+  // With the whole card selected, write card-side move requests. MiSTer applies
+  // them with atomic mv; browsers cannot atomically move mounted-card folders.
+  const groups={};[...basket.values()].forEach(i=>{(groups[i.sys]=groups[i.sys]||[]).push(i);});
+  let done=0,fail=0,lastErr=null,blocked=0;
+  for(const sysName of Object.keys(groups)){
+    const sys=systems.find(s=>s.name===sysName);
+    if(!sys){fail+=groups[sysName].length;continue;}
+    const stage=stateIsConsole?null:await stageDirFor(sys);
+    for(const item of groups[sysName]){
+      // HARD GUARD: system files (BIOS, boot ROMs, media/ art, palettes, …) are never
+      // schedulable — hiding them breaks cores and artwork, not gameplay pacing.
+      if(item.sysfile||isSystemFile(item.name,item.kind)|| (revealedKeys.has(keyOf(sysName,item.name))&&!allowRehide)){
+        blocked++;basket.delete(keyOf(sysName,item.name));continue;
+      }
+      const newName=date+"_"+stripPrefix(item.name);
+      try{
+        if(stateIsConsole)await requestSchedule(date,sysName,stripPrefix(item.name));
+        else if(item.kind==="file")await moveFile(sys.handle,item.name,stage,newName);
+        else await moveDir(sys.handle,item.name,stage,newName);
+        done++;
+      }catch(e){console.error(e);lastErr=e;fail++;}
+    }
+  }
+  // FAILSAFE: a blank message field never clears a banner already set for this date
+  // (use the ✕ next to the banner in the Queue tab to clear one deliberately), and
+  // no banner is written if every move failed.
+  const msg=$("#message").value.trim();
+  if(msg&&done>0){try{await writeOccasion(date,msg);}catch(e){console.error(e);}}
+  btn.textContent="Schedule selected games";
+  $("#message").value="";
+  basket.clear();
+  await loadGames($("#systemSel").value);
+  await refreshQueue();
+  toast(`${stateIsConsole?"Prepared":"Scheduled"} ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed)":""}${blocked?" ("+blocked+" system file(s) skipped)":""} for ${fmtLong(selDate)}${stateIsConsole?" — run Dripfeed once on MiSTer to move them safely":""}`,fail>0);
+  if(fail&&isConnError(lastErr))guideReconnect("Some games couldn't be moved — the folder connection looks stale");
+  // Jump to the queue so the applied or pending result is visible.
+  showTab("queue");
+};
+
+// ---------- queue ----------
+async function getQueueItems(){
+  const items=[];
+  for(const s of systems){
+    for(const stage of await stageDirsFor(s)){
+      for await(const [name,h] of stage.entries()){
+        if(!DATE_RE.test(name))continue;
+        const incomplete=h.kind==="directory"&&await h.getFileHandle(".dripfeed-incomplete").then(()=>true).catch(()=>false);
+        items.push({date:name.slice(0,10),sys:s.name,clean:name.slice(11),raw:name,sysHandle:s.handle,stageHandle:stage,incomplete});
+      }
+    }
+  }
+  if(stateIsConsole){
+    const byKey=new Map(items.map(i=>[requestKey(i.sys,i.clean),i]));
+    for(const r of await readMoveRequests("schedule-requests.tsv",true)){
+      const existing=byKey.get(requestKey(r.sys,r.name));
+      if(existing){existing.date=r.date;existing.movePending=true;}
+      else{const sys=systems.find(s=>s.name===r.sys);if(sys)items.push({date:r.date,sys:r.sys,clean:r.name,sysHandle:sys.handle,movePending:true});}
+    }
+    const returns=new Set((await readMoveRequests("unschedule-requests.tsv",false)).map(r=>requestKey(r.sys,r.name)));
+    items.forEach(i=>{if(returns.has(requestKey(i.sys,i.clean)))i.returnPending=true;});
+  }
+  items.sort((a,b)=>a.date.localeCompare(b.date)||a.sys.localeCompare(b.sys));
+  return items;
+}
+let qFilterSys="", qSortBy="date";
+async function unstageItem(it){
+  if(it.movePending&&!it.stageHandle){await cancelScheduleRequest(it.sys,it.clean);return;}
+  if(stateIsConsole){await requestUnschedule(it.sys,it.clean);return;}
+  const stage=it.stageHandle;
+  if(it.incomplete)throw new Error("incomplete staged copy held for recovery; original was not removed");
+  const entry=await stage.getFileHandle(it.raw).then(()=>"file").catch(()=>"dir");
+  if(entry==="file")await moveFile(stage,it.raw,it.sysHandle,it.clean);
+  else await moveDir(stage,it.raw,it.sysHandle,it.clean);
+}
+async function redateItem(it,date){
+  if(stateIsConsole){await requestSchedule(date,it.sys,it.clean);return;}
+  const stage=it.stageHandle;
+  if(it.incomplete)throw new Error("incomplete staged copy held for recovery; original was not removed");
+  const newName=date+"_"+it.clean;
+  if(it.raw===newName)return;
+  const entry=await stage.getFileHandle(it.raw).then(()=>"file").catch(()=>"dir");
+  if(entry==="file")await moveFile(stage,it.raw,stage,newName);
+  else await moveDir(stage,it.raw,stage,newName);
+}
+async function refreshQueue(){
+  await readRevealLedger();
+  let items=await getQueueItems();
+  $("#queueCount").textContent=items.length;
+  const occ=await readOccasions();
+  const box=$("#queueList");box.innerHTML="";
+  if(!items.length){box.innerHTML='<p class="sub">Nothing scheduled yet.</p>';return;}
+  const note=document.createElement("p");note.className="sub";note.style.margin="0 0 10px";
+  note.innerHTML="These games wait in <code>"+STAGE_ROOT_NAME+"</code>, outside <code>games/</code>, until their date. Browser changes marked <b>MOVE PENDING</b> finish with one atomic move the next time Dripfeed runs on MiSTer. Older per-system queues remain readable during the upgrade. <code>revealed.tsv</code> keeps later CSV updates from re-hiding unveiled games unless you enable the override.";
+  box.appendChild(note);
+  // ---- filter / sort / bulk bar ----
+  const bar=document.createElement("div");bar.className="barrow";bar.style.cssText="margin:0 0 12px;gap:8px;flex-wrap:wrap";
+  const sysSel=document.createElement("select");
+  sysSel.innerHTML='<option value="">All systems</option>'+[...new Set(items.map(i=>i.sys))].sort().map(s=>`<option ${s===qFilterSys?"selected":""}>${s}</option>`).join("");
+  sysSel.onchange=()=>{qFilterSys=sysSel.value;refreshQueue();};
+  const sortSel=document.createElement("select");
+  sortSel.innerHTML=`<option value="date" ${qSortBy==="date"?"selected":""}>Sort: by date</option><option value="sys" ${qSortBy==="sys"?"selected":""}>Sort: by system</option>`;
+  sortSel.onchange=()=>{qSortBy=sortSel.value;refreshQueue();};
+  const unBtn=document.createElement("button");unBtn.className="ghost";unBtn.textContent="Unschedule ALL shown";
+  const rdDate=document.createElement("input");rdDate.type="date";
+  const rdBtn=document.createElement("button");rdBtn.className="ghost";rdBtn.textContent="Re-date ALL shown →";
+  bar.append(sysSel,sortSel,unBtn,rdBtn,rdDate);box.appendChild(bar);
+  // ---- GOT'eM track (its own schedule: one pick per month, independent of the drip) ----
+  try{
+    const g=await readGotm(); const months=Object.keys(g).sort();
+    if(months.length){
+      const h=document.createElement("p");h.className="sub";h.style.margin="6px 0 4px";
+      h.innerHTML="<b>🏆 GOT'eM track</b> — monthly picks (managed here or on the GOT'eM tab):";
+      box.appendChild(h);
+      for(const m of months){
+        const [gp,glab]=g[m].split("\t");
+        const row=document.createElement("div");row.className="qrow";
+        row.innerHTML=`<span class="d">${m}</span><span class="n">${gp.replace(/</g,"&lt;")}${glab?' <span class="tag">'+glab.replace(/</g,"&lt;")+'</span>':""}</span>`;
+        const del=document.createElement("button");del.className="ghost";del.textContent="Remove";
+        del.onclick=async()=>{await writeGotm(m,null);toast("GOT'eM pick removed for "+m);refreshQueue();};
+        row.appendChild(del);box.appendChild(row);
+      }
+    }
+  }catch(e){}
+  if(qFilterSys)items=items.filter(i=>i.sys===qFilterSys);
+  if(qSortBy==="sys")items.sort((a,b)=>a.sys.localeCompare(b.sys)||a.date.localeCompare(b.date));
+  unBtn.onclick=async()=>{
+    if(!confirm(`Unschedule ${items.length} game(s)?${stateIsConsole?" The safe return finishes next time Dripfeed runs on MiSTer.":" They become visible immediately."}`))return;
+    let n=0,bad=0,err=null;
+    for(const it of items){try{await unstageItem(it);n++;}catch(e){console.error(e);bad++;err=e;}}
+    toast(`Unscheduled ${n} game(s)`+(bad?` — ${bad} failed (${err&&err.name||"error"})`:"")+".",bad>0);
+    if(bad&&isConnError(err)&&!(await connAlive()))guideReconnect("Some games couldn't be unscheduled — the folder connection looks stale");
+    await refreshQueue();if(systems.length)await loadGames($("#systemSel").value);
+  };
+  rdBtn.onclick=async()=>{
+    const d=rdDate.value;
+    if(!d){toast("Pick a date first (box to the right).",true);return;}
+    if(!confirm(`Move ${items.length} shown game(s) to ${d}?`))return;
+    let n=0,bad=0,err=null;
+    for(const it of items){try{await redateItem(it,d);n++;}catch(e){console.error(e);bad++;err=e;}}
+    toast(`Re-dated ${n} game(s) to ${d}`+(bad?` — ${bad} failed (${err&&err.name||"error"})`:"")+".",bad>0);
+    await refreshQueue();
+  };
+  const tNum=dToNum(todayObj());let lastDate="";
+  for(const it of items){
+    if(it.date!==lastDate&&occ[it.date]){
+      const o=document.createElement("div");o.className="occ";
+      o.append(document.createTextNode("🎉 "+occ[it.date]+" — "+it.date+" "));
+      const x=document.createElement("button");x.className="ghost";x.textContent="✕ clear";
+      x.title="Remove this banner message";x.style.cssText="margin-left:8px;font-size:12px;padding:2px 8px";
+      x.onclick=async()=>{try{await writeOccasion(it.date,"");toast("Banner cleared.");await refreshQueue();}catch(e){console.error(e);toast("Couldn't clear banner.",true);}};
+      o.appendChild(x);box.appendChild(o);
+    }
+    lastDate=it.date;
+    const due=(+it.date.replace(/-/g,""))<=tNum;
+    const row=document.createElement("div");row.className="qrow";
+    row.innerHTML=`<span class="d">${it.date}</span>
+      <span class="n">${it.clean.replace(/</g,"&lt;")} <span class="tag">${it.sys}</span> ${it.incomplete?'<span class="due">RECOVERY HOLD</span>':it.returnPending?'<span class="due">RETURN PENDING</span>':it.movePending?'<span class="tag">MOVE PENDING</span>':due?'<span class="due">DUE</span>':""}</span>`;
+    const btn=document.createElement("button");btn.className="ghost";btn.textContent="Unschedule";
+    btn.onclick=async()=>{
+      try{
+        await unstageItem(it);
+        toast(stateIsConsole?(it.movePending&&!it.stageHandle?"Pending schedule cancelled; game stays visible.":"Return prepared — run Dripfeed once on MiSTer."):"Unscheduled — back to visible.");
+        await refreshQueue();
+        if($("#systemSel").value===it.sys)await loadGames(it.sys);
+      }catch(e){console.error(e);
+        if(isConnError(e)&&!(await connAlive()))guideReconnect("Couldn't reach that game — the folder connection looks stale");
+        else toast("Couldn't unschedule ("+(e&&e.name||"error")+") — see the browser console for details.",true);}
+    };
+    row.appendChild(btn);box.appendChild(row);
+  }
+}
+
+// ---------- Game of the Month ----------
+// Engine contract: Scripts/.dripfeed/gotm.tsv, lines "YYYY-MM<TAB>path-rel-to-/media/fat"
+// (games/SYS/file, games/SYS/folder, or _Arcade/file.mra). One pick per month.
+async function readGotm(){
+  const map={};
+  try{const fh=await stateDir.getFileHandle("gotm.tsv");const t=await(await fh.getFile()).text();
+    t.split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
+  }catch(e){}
+  return map;
+}
+async function writeGotm(month,path){
+  const map=await readGotm();
+  if(path)map[month]=path; else delete map[month];
+  const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
+  const fh=await stateDir.getFileHandle("gotm.tsv",{create:true});
+  const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+}
+let gotmEntries=[]; // {label, relpath}
+async function gotmLoadSys(){
+  const sel=$("#gotmSys"); if(!sel) return;
+  const opts=systems.map(s=>`<option value="sys:${s.name}">${s.name}</option>`);
+  if(sdRoot){ try{ await sdRoot.getDirectoryHandle("_Arcade"); opts.unshift('<option value="arcade">_Arcade (arcade .mra)</option>'); }catch(e){} }
+  sel.innerHTML=opts.join("");
+  sel.onchange=gotmLoadGames; $("#gotmSearch").oninput=gotmRender;
+  await gotmLoadGames();
+}
+async function gotmLoadGames(){
+  gotmEntries=[];
+  const v=$("#gotmSys").value;
+  if(v==="arcade"){
+    const arc=await sdRoot.getDirectoryHandle("_Arcade");
+    for await(const [n,h] of arc.entries()){
+      if(h.kind==="file"&&n.toLowerCase().endsWith(".mra")) gotmEntries.push({label:n,relpath:"_Arcade/"+n});
+    }
+  } else {
+    const sysName=v.slice(4); const sys=systems.find(s=>s.name===sysName);
+    if(sys){
+      for await(const [n,h] of sys.handle.entries()){
+        if(n.startsWith(".")||n==="media"||n==="gamelist.xml"||n.startsWith("boot")||n.startsWith("mister-")) continue;
+        gotmEntries.push({label:n,relpath:"games/"+sysName+"/"+n});
+      }
+      // scheduled (hidden) games are valid picks too — engine waits for the reveal
+      for(const stage of await stageDirsFor(sys)){
+        for await(const [n] of stage.entries()){
+          if(DATE_RE.test(n)) gotmEntries.push({label:"⏳ "+n.slice(11)+"  (scheduled "+n.slice(0,10)+")",relpath:"games/"+sysName+"/"+n.slice(11)});
+        }
+      }
+    }
+  }
+  gotmEntries.sort((a,b)=>a.label.localeCompare(b.label));
+  gotmRender();
+}
+function gotmRender(){
+  const q=($("#gotmSearch").value||"").toLowerCase();
+  $("#gotmGame").innerHTML=gotmEntries.filter(e=>e.label.toLowerCase().includes(q))
+    .map(e=>`<option value="${e.relpath.replace(/"/g,"&quot;")}">${e.label.replace(/</g,"&lt;")}</option>`).join("");
+}
+async function gotmRefreshList(){
+  const map=await readGotm(); const box=$("#gotmList"); box.innerHTML="";
+  const keys=Object.keys(map).sort();
+  if(!keys.length){box.innerHTML='<p class="sub">No picks yet.</p>';return;}
+  for(const m of keys){
+    const row=document.createElement("div");row.className="qrow";
+    const [gp,glab]=map[m].split("\t");
+    row.innerHTML=`<span class="d">${m}</span><span class="n">${gp.replace(/</g,"&lt;")}${glab?' <span class="tag">'+glab.replace(/</g,"&lt;")+'</span>':""}</span>`;
+    const del=document.createElement("button");del.className="ghost";del.textContent="Remove";
+    del.onclick=async()=>{await writeGotm(m,null);toast("Pick removed for "+m);gotmRefreshList();};
+    row.appendChild(del);box.appendChild(row);
+  }
+}
+$("#gotmSave").onclick=async()=>{
+  const m=$("#gotmMonth").value, p=$("#gotmGame").value;
+  if(!m){toast("Pick a month.",true);return;}
+  if(!p){toast("Pick a game.",true);return;}
+  const lab=$("#gotmLabel").value.trim();
+  await writeGotm(m,p+(lab?"\t"+lab:""));
+  toast("GOT'eM pick set for "+m+".");
+  gotmRefreshList();
+};
+
+// ---------- tabs ----------
+function showTab(tab){
+  $$(".tab").forEach(x=>{const on=x.dataset.tab===tab;x.classList.toggle("on",on);x.setAttribute("aria-selected",String(on));});
+  $("#tab-schedule").classList.toggle("hidden",tab!=="schedule");
+  $("#tab-import").classList.toggle("hidden",tab!=="import");
+  $("#tab-queue").classList.toggle("hidden",tab!=="queue");
+  $("#tab-gotm").classList.toggle("hidden",tab!=="gotm");
+  if(tab==="queue")refreshQueue();
+  if(tab==="gotm"){ if(!$("#gotmMonth").value){const n=new Date();$("#gotmMonth").value=n.getFullYear()+"-"+pad(n.getMonth()+1);} gotmLoadSys(); gotmRefreshList(); }
+}
+$$(".tab").forEach(t=>t.onclick=()=>showTab(t.dataset.tab));
+
+// ---------- CSV import / export ----------
+// NOTE: only the first THREE columns (path, date, message) are read. Anything after
+// them — genre, console, players, hours_to_beat, series, release_date, etc. — is
+// reference-only for the user's own spreadsheet and is deliberately ignored here.
+// Minimal RFC-4180-ish parser (handles quotes, commas, CRLF).
+function parseCsv(text){
+  const rows=[]; let row=[], cell="", q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else q=false; } else cell+=c; }
+    else if(c==='"') q=true;
+    else if(c===','){ row.push(cell); cell=""; }
+    else if(c==='\n'){ row.push(cell); rows.push(row); row=[]; cell=""; }
+    else if(c==='\r'){ /* ignore */ }
+    else cell+=c;
+  }
+  if(cell.length||row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r=>r.length && r.some(x=>x.trim()!==""));
+}
+// GOT'eM rows use a MONTH instead of a date: "2026-08" or "8/2026" -> "YYYY-MM". null if not a month.
+function normMonth(s){
+  s=(s||"").trim();
+  let m=s.match(/^(\d{4})-(\d{1,2})$/); if(m&&+m[2]>=1&&+m[2]<=12) return m[1]+"-"+pad(+m[2]);
+  m=s.match(/^(\d{1,2})\/(\d{4})$/);   if(m&&+m[1]>=1&&+m[1]<=12) return m[2]+"-"+pad(+m[1]);
+  return null;
+}
+// Normalise a date cell to YYYY-MM-DD (accepts ISO, M/D/YYYY, "Mon DD, YYYY"). null if bad.
+function normDate(s){
+  s=(s||"").trim(); if(!s) return null;
+  let m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(m){const y=+m[1],mo=+m[2],day=+m[3],dt=new Date(y,mo-1,day);
+    if(dt.getFullYear()!==y||dt.getMonth()!==mo-1||dt.getDate()!==day)return null;
+    return y+"-"+pad(mo)+"-"+pad(day);}
+  m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if(m){ let y=+m[3]; if(y<100)y+=2000; const dt=new Date(y,+m[1]-1,+m[2]);
+    if(dt.getFullYear()!==y||dt.getMonth()!==+m[1]-1||dt.getDate()!==+m[2])return null;
+    return y+"-"+pad(+m[1])+"-"+pad(+m[2]); }
+  const d=new Date(s); if(!isNaN(d)){const y=d.getFullYear(),mo=d.getMonth(),day=d.getDate(),dt=new Date(y,mo,day);
+    if(dt.getFullYear()===y&&dt.getMonth()===mo&&dt.getDate()===day)return y+"-"+pad(mo+1)+"-"+pad(day);}
+  return null;
+}
+// Resolve a games-relative path to a handle. Returns {sys,sysHandle,name,kind,handle} or {error}.
+async function resolvePath(rel){
+  const parts=rel.split("/").map(s=>s.trim()).filter(Boolean);
+  if(parts.length<2) return {error:"need SYSTEM/file"};
+  const sysName=parts[0]; const sys=systems.find(s=>s.name===sysName);
+  if(!sys) return {error:"no system '"+sysName+"'"};
+  let dir=sys.handle;
+  try{ for(let i=1;i<parts.length-1;i++) dir=await dir.getDirectoryHandle(parts[i]); }
+  catch(e){ return {error:"subfolder missing", sys:sysName, sysHandle:sys.handle}; }
+  const last=parts[parts.length-1];
+  try{ const h=await dir.getFileHandle(last); const info=await classifyEntry(last,h); return {sys:sysName,sysHandle:sys.handle,name:last,kind:"file",handle:h,sysfile:info.sysfile,systemReason:info.reason}; }catch(e){}
+  try{ const h=await dir.getDirectoryHandle(last); const info=await classifyEntry(last,h); return {sys:sysName,sysHandle:sys.handle,name:last,kind:"directory",handle:h,sysfile:info.sysfile,systemReason:info.reason}; }catch(e){}
+  // Already scheduled? Look in the hidden staging folder — importing a CSV with a
+  // new date then simply RE-DATES the staged entry instead of failing.
+  try{
+    for(const stage of await stageDirsFor(sys)){
+    for await(const [n,h] of stage.entries()){
+      if(stripPrefix(n)===last){ const info=await classifyEntry(last,h); return {sys:sysName,sysHandle:sys.handle,name:last,kind:h.kind==="directory"?"directory":"file",handle:h,stageHandle:stage,sysfile:info.sysfile,systemReason:info.reason,staged:n}; }
+    }
+    }
+  }catch(e){}
+  return {error:"file not found", sys:sysName, sysHandle:sys.handle};
+}
+async function listSystemFiles(sysName){
+  const sys=systems.find(s=>s.name===sysName); if(!sys) return [];
+  const out=[]; for await(const [n,h] of sys.handle.entries()){
+    if(n.startsWith("."))continue;
+    const info=await classifyEntry(n,h);
+    if(!info.sysfile)out.push({name:n,kind:h.kind});
+  }
+  return out.sort((a,b)=>a.name.localeCompare(b.name));
+}
+
+let csvRows=[];   // [{path,date,message,status,sys,name,kind,handle,skip}]
+function csvParseInput(text){
+  const rows=parseCsv(text);
+  if(!rows.length) return [];
+  // strip header if present
+  const h=(rows[0][0]||"").toLowerCase().trim();
+  if(["path","file","filepath","relative_path","relativepath"].includes(h)) rows.shift();
+  return rows.map(r=>({path:(r[0]||"").trim(), date:(r[1]||"").trim(), message:(r[2]||"").trim()}));
+}
+async function csvReview(text){
+  const raw=csvParseInput(text);
+  csvRows=[];
+  for(const r of raw){
+    // GOT'eM track: a month (not a day) in the date column schedules a Game of the Month pick
+    const gotem=normMonth(r.date);
+    const date=gotem?null:normDate(r.date);
+    const row={path:gotem?gotmCsvPath(r.path):r.path,dateRaw:r.date,date,gotem,message:r.message,skip:false,status:"",sys:"",name:"",kind:"",handle:null};
+    if(!r.path){ row.status="bad: empty path"; }
+    else if(gotem){
+      if(row.path.startsWith("_Arcade/")){
+        let ok=false;
+        try{const arc=await sdRoot.getDirectoryHandle("_Arcade");await arc.getFileHandle(row.path.slice(8));ok=true;}catch(e){}
+        row.status=ok?"OK":"NOT FOUND: arcade file";
+      } else {
+        const res=await resolvePath(row.path);
+        if(res.error){ row.status="NOT FOUND: "+res.error; row.sys=res.sys||(row.path.split("/")[0]); }
+        else { row.status="OK"; }
+      }
+      csvRows.push(row); continue;
+    }
+    else if(!date){ const res=await resolvePath(r.path); Object.assign(row,res.error?{}:res);
+      row.status=r.dateRaw.trim()?("bad date: '"+r.dateRaw+"'"):"missing date"; row.needsdate=!res.error; }
+    else {
+      const res=await resolvePath(r.path);
+      if(res.error){ row.status="NOT FOUND: "+res.error; row.sys=res.sys||(r.path.split("/")[0]); }
+      else if(revealedKeys.has(keyOf(res.sys,res.name))&&!allowRehide){
+        Object.assign(row,res); row.status="UNVEILED — protected (enable re-hide override)"; row.skip=true;
+      }
+      else if(res.sysfile){
+        Object.assign(row,res); row.status="system file — not schedulable"; row.skip=true;
+      }
+      else if(res.staged){
+        Object.assign(row,res);
+        row.status="OK";                         // already scheduled: import re-dates it
+        row.redate = res.staged.slice(0,10)!==date;
+      }
+      else { Object.assign(row,res); row.status="OK"; }
+    }
+    csvRows.push(row);
+  }
+  renderCsvTable();
+  // If most rows failed to resolve, the likely cause is the WRONG folder being
+  // connected (a single system folder instead of games/, or a stale handle) —
+  // walk the user through reconnecting rather than leaving a wall of errors.
+  const bad=csvRows.filter(r=>r.status&&r.status!=="OK").length;
+  if(csvRows.length>=3&&bad>=Math.ceil(csvRows.length*0.6)){
+    guideReconnect("Most CSV rows didn't match any files",
+      "Your paths look like <code>SYSTEM/file</code>, so the app needs the folder that directly <b>contains those system folders</b> (your <code>games</code> folder or the whole SD card). Also check the system folder names in the CSV match the real ones (e.g. <code>MegaDrive</code>, not <code>GENESIS</code>).");
+  }
+}
+function rowOk(r){ return r.status==="OK" && !r.skip; }
+async function renderCsvTable(){
+  const box=$("#csvTable"); box.innerHTML="";
+  if(!csvRows.length){ box.innerHTML='<p class="sub">No rows.</p>'; $("#csvApplyRow").style.display="none"; return; }
+  for(let i=0;i<csvRows.length;i++){
+    const r=csvRows[i];
+    const div=document.createElement("div"); div.className="qrow";
+    const ok=rowOk(r);
+    const stat=ok?(r.gotem?'<span style="color:var(--accent2)">GOT\'eM '+r.gotem+'</span>':r.staged?(r.redate?'<span style="color:var(--accent2)">RE-DATE</span>':'<span style="color:var(--accent)">OK (scheduled)</span>'):'<span style="color:var(--accent)">OK</span>'):'<span style="color:var(--bad)">'+r.status+'</span>';
+    div.innerHTML=`<span class="d">${r.gotem||r.date||r.dateRaw||"—"}</span>
+      <span class="n">${(r.path||"").replace(/</g,"&lt;")} ${r.message?'<span class="tag">msg</span>':''} — ${stat}</span>`;
+    // date picker for rows missing a usable date (pick right here, no re-import needed)
+    if(!ok && r.needsdate){
+      const di=document.createElement("input"); di.type="date"; di.style.maxWidth="160px";
+      di.onchange=()=>{ if(!di.value)return; r.date=di.value; r.status="OK";
+        if(r.staged) r.redate=r.staged.slice(0,10)!==r.date;
+        renderCsvTable(); };
+      div.appendChild(di);
+    }
+    // remap dropdown for NOT FOUND rows (lets you fix a typo'd filename)
+    if(r.status.startsWith("NOT FOUND") && r.sys){
+      const sel=document.createElement("select"); sel.style.maxWidth="260px";
+      sel.innerHTML='<option value="">— pick correct file —</option>';
+      const files=await listSystemFiles(r.sys);
+      files.forEach(f=>{const o=document.createElement("option");o.value=f.name;o.textContent=f.name;sel.appendChild(o);});
+      sel.onchange=async()=>{ if(!sel.value)return; const res=await resolvePath(r.sys+"/"+sel.value); if(!res.error){Object.assign(r,res);r.path=r.sys+"/"+sel.value;r.status="OK";} renderCsvTable(); };
+      div.appendChild(sel);
+    } else {
+      const skip=document.createElement("label"); skip.style.fontSize="12px"; skip.style.color="var(--dim)";
+      skip.innerHTML=`<input type="checkbox" ${r.skip?"checked":""}> skip`;
+      skip.querySelector("input").onchange=e=>{r.skip=e.target.checked;renderCsvTable();};
+      div.appendChild(skip);
+    }
+    box.appendChild(div);
+  }
+  const okc=csvRows.filter(rowOk).length, bad=csvRows.length-okc;
+  $("#csvSummary").textContent=`${okc} ready, ${bad} skipped/needs fixing`;
+  $("#csvApplyRow").style.display = okc>0 ? "flex" : "none";
+  // bulk date-fix bar for rows that resolved to a real game but have no usable date
+  const dateless=csvRows.filter(r=>!rowOk(r)&&r.needsdate);
+  if(dateless.length){
+    const bar=document.createElement("div"); bar.className="qrow";
+    bar.innerHTML=`<span class="n"><b>${dateless.length}</b> row(s) have no usable date — set one for all of them:</span>`;
+    const di=document.createElement("input"); di.type="date"; di.style.maxWidth="160px";
+    const btn=document.createElement("button"); btn.className="ghost"; btn.textContent="Apply to all";
+    btn.onclick=()=>{ if(!di.value){toast("Pick a date first.",true);return;}
+      for(const r of dateless){ r.date=di.value; r.status="OK"; if(r.staged) r.redate=r.staged.slice(0,10)!==r.date; }
+      renderCsvTable(); };
+    bar.append(di,btn); box.prepend(bar);
+  }
+}
+async function csvApply(){
+  const rows=csvRows.filter(rowOk);
+  if(!rows.length)return;
+  let done=0,fail=0,lastErr=null;
+  for(const r of rows){
+    try{
+      if(r.gotem){    // GOT'eM track: one pick per month into gotm.tsv (message = shortcut label)
+        await writeGotm(r.gotem, gotmStatePath(r.path)+(r.message?"\t"+r.message:""));
+        done++; continue;
+      }
+      if(r.sysfile||(!r.staged&&isSystemFile(r.name,r.kind))) continue;   // hard guard (belt & braces)
+      const sys=systems.find(s=>s.name===r.sys);
+      if(stateIsConsole){
+        await requestSchedule(r.date,r.sys,stripPrefix(r.name));
+        if(r.message)await writeOccasion(r.date,r.message);
+        done++;continue;
+      }
+      const stage=r.stageHandle||await stageDirFor(sys);
+      const newName=r.date+"_"+stripPrefix(r.name);
+      if(r.staged){                             // already scheduled: just re-date in place
+        if(r.staged!==newName){
+          if(r.kind==="file") await moveFile(stage,r.staged,stage,newName);
+          else await moveDir(stage,r.staged,stage,newName);
+        }
+      }
+      else if(r.kind==="file") await moveFile(sys.handle,r.name,stage,newName);
+      else await moveDir(sys.handle,r.name,stage,newName);
+      if(r.message) await writeOccasion(r.date,r.message);
+      done++;
+    }catch(e){console.error(e);lastErr=e;fail++;}
+  }
+  csvRows=[]; $("#csvTable").innerHTML=""; $("#csvApplyRow").style.display="none";
+  $("#csvPaste").value=""; $("#csvSummary").textContent="";
+  await loadGames($("#systemSel").value); await refreshQueue();
+  toast(`Imported ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed)":""}`,fail>0);
+  if(fail&&isConnError(lastErr))guideReconnect("Some rows couldn't be imported — the folder connection looks stale");
+  showTab("queue");
+}
+function downloadText(name,text,mime){
+  const b=new Blob([text],{type:mime||"text/plain"}); const u=URL.createObjectURL(b);
+  const a=document.createElement("a"); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),1000);
+}
+function csvCell(s){ s=String(s==null?"":s); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+async function exportCsv(){
+  const items=await getQueueItems(); const occ=await readOccasions();
+  const lines=["path,date,message,genre,console,players,hours_to_beat,series,release_date"];
+  for(const it of items){ lines.push([csvCell(it.sys+"/"+it.clean), it.date, csvCell(occ[it.date]||""),"","","","","",""].join(",")); }
+  // GOT'eM track rides the same file: month in the date column, shortcut label as the message
+  try{const g=await readGotm();
+    for(const m of Object.keys(g).sort()){
+      const [p,lab]=g[m].split("\t");
+      lines.push([csvCell(gotmCsvPath(p)),m,csvCell(lab||""),"","","","","",""].join(","));
+    }}catch(e){}
+  downloadText("dripfeed-schedule.csv", lines.join("\n")+"\n", "text/csv");
+  toast(items.length?("Exported "+items.length+" rows"):"Exported empty template");
+}
+$("#csvReview").onclick=()=>{ const t=$("#csvPaste").value.trim(); if(!t){toast("Paste CSV or choose a file first.",true);return;} csvReview(t); };
+$("#csvChoose").onclick=()=>$("#csvFile").click();
+$("#csvFile").onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=()=>{$("#csvPaste").value=rd.result; csvReview(rd.result);}; rd.readAsText(f); };
+$("#csvApply").onclick=csvApply;
+$("#csvExport").onclick=exportCsv;
+$("#exportCsv").onclick=exportCsv;
+$("#csvTemplate").onclick=()=>downloadText("dripfeed-template.csv",
+  "path,date,message,genre,console,players,hours_to_beat,series,release_date\n"+
+  "MegaDrive/Shiny Forts.md,2026-07-10,,Platformer,Sega Genesis,1,6,Shiny Forts,1992-11-20\n"+
+  "Saturn/Shiny Forts III,2027-05-25,Happy Towel Day!,RPG,Sega Saturn,1,40,Shiny Forts,1998-01-29\n"+
+  "_Arcade/Shiny Forts Arcade.mra,2026-08,GOT'eM Aug - Shiny Forts,,,,,,\n",
+  "text/csv");
+
+// ---------- advanced: override the staging folder name ----------
+// ---------- folder-name customization (writes config.ini on the card) ----------
+function cleanFolderName(s,fallback){
+  s=(s||"").replace(/[<>:"/\\|?*]/g,"").replace(/[^\x20-\x7E]/g,"").replace(/\s+/g," ").trim();
+  if(!s) s=fallback;
+  if(!s.startsWith("_")) s="_"+s;
+  return s;
+}
+async function readConfigIni(){
+  try{const fh=await stateDir.getFileHandle("config.ini");return await(await fh.getFile()).text();}
+  catch(e){return "";}
+}
+async function patchConfigIni(kv){
+  let t=await readConfigIni();
+  for(const [k,v] of Object.entries(kv)){
+    const line=`${k}="${v}"`;
+    const re=new RegExp("^"+k+"\\s*=.*$","m");
+    if(re.test(t)) t=t.replace(re,line);
+    else t+=(t.endsWith("\n")||!t?"":"\n")+line+"\n";
+  }
+  const fh=await stateDir.getFileHandle("config.ini",{create:true});
+  const w=await fh.createWritable();await w.write(t);await w.close();
+}
+// OSD budget: ~30 chars total. Date label "New Fri Jul 3, 26" ≈ 17-18; month tag " - Aug" = 6.
+const OSD_MAX=30, DATE_ROOM=18, MONTH_ROOM=6;
+function cfgUpdateLimits(){
+  const pMax=$("#cfgShowDate").checked?OSD_MAX-DATE_ROOM:OSD_MAX;
+  const gMax=$("#cfgGotmMonth").checked?OSD_MAX-MONTH_ROOM:OSD_MAX;
+  $("#cfgPrefix").maxLength=pMax; $("#cfgGotm").maxLength=gMax;
+  if($("#cfgPrefix").value.length>pMax)$("#cfgPrefix").value=$("#cfgPrefix").value.slice(0,pMax);
+  if($("#cfgGotm").value.length>gMax)$("#cfgGotm").value=$("#cfgGotm").value.slice(0,gMax);
+  $("#cfgLimits").textContent=`Length limits right now: Dripfeed folder ≤ ${pMax} chars`+
+    ($("#cfgShowDate").checked?" (date uses the rest)":"")+
+    `, GOT'eM folder ≤ ${gMax} chars`+($("#cfgGotmMonth").checked?" (month tag uses the rest)":"")+".";
+}
+$("#cfgShowDate").onchange=cfgUpdateLimits;
+$("#cfgGotmMonth").onchange=cfgUpdateLimits;
+async function cfgLoad(){
+  const t=await readConfigIni();
+  const get=k=>{const m=t.match(new RegExp("^"+k+"\\s*=\\s*(.*)$","m"));if(!m)return null;
+    let v=m[1].replace(/#.*$/,"").trim();return v.replace(/^["']|["']$/g,"");};
+  const configuredStage=get("STAGING_ROOT");
+  if(configuredStage){
+    const name=configuredStage.split("/").filter(Boolean).pop();
+    if(name&&name.startsWith(".")&&!name.includes("\\")){
+      STAGE_ROOT_NAME=name;$("#stageName").value=name;
+      if(stateIsConsole&&sdRoot)stageRoot=await sdRoot.getDirectoryHandle(name,{create:true});
+    }
+  }
+  $("#cfgPrefix").value=get("SHOWCASE_PREFIX")??"_Dripfeed - ";
+  $("#cfgShowDate").checked=(get("SHOWCASE_DATE")??"1")!=="0";
+  $("#cfgGotm").value=get("GOTM_DIRNAME")??"_Game of the Month";
+  $("#cfgGotmMonth").checked=(get("GOTM_MONTH")??"0")==="1";
+  $("#cfgShowcase").checked=(get("SHOWCASE")??"1")!=="0";
+  $("#cfgGotmOn").checked=(get("GOTM")??"1")!=="0";
+  cfgUpdateLimits();
+}
+$("#cfgApply").onclick=async()=>{
+  if(!stateDir){toast("Connect the SD card first.",true);return;}
+  let prefix=$("#cfgPrefix").value;
+  // the prefix may end with a separator ("_Dripfeed - "); clean the body, keep the tail
+  const tail=(prefix.match(/[-\s]+$/)||[""])[0].replace(/[^\x20-\x7E]/g,"");
+  prefix=cleanFolderName(prefix,"_Dripfeed - ");
+  if(tail && !prefix.endsWith(tail.trim())) prefix+=tail;
+  const pMax=$("#cfgShowDate").checked?OSD_MAX-DATE_ROOM:OSD_MAX;
+  const gMax=$("#cfgGotmMonth").checked?OSD_MAX-MONTH_ROOM:OSD_MAX;
+  prefix=prefix.slice(0,pMax);
+  const gotm=cleanFolderName($("#cfgGotm").value,"_Game of the Month").slice(0,gMax);
+  await patchConfigIni({SHOWCASE_PREFIX:prefix,SHOWCASE_DATE:$("#cfgShowDate").checked?"1":"0",
+    GOTM_DIRNAME:gotm,GOTM_MONTH:$("#cfgGotmMonth").checked?"1":"0",
+    SHOWCASE:$("#cfgShowcase").checked?"1":"0",GOTM:$("#cfgGotmOn").checked?"1":"0"});
+  $("#cfgPrefix").value=prefix;$("#cfgGotm").value=gotm;
+  cfgUpdateLimits();
+  toast("Folder names saved to config.ini.");
+};
+cfgUpdateLimits();
+$("#stageName").value=STAGE_ROOT_NAME;
+$("#stageApply").onclick=async()=>{
+  let v=$("#stageName").value.trim()||".dripfeed-library";
+  if(!v.startsWith(".")){toast("Staging name must start with a dot so it stays hidden.",true);return;}
+  if(v.includes("/")||v.includes("\\")){toast("Use one folder name, without slashes.",true);return;}
+  STAGE_ROOT_NAME=v;
+  if(stateIsConsole&&sdRoot){stageRoot=await sdRoot.getDirectoryHandle(STAGE_ROOT_NAME,{create:true});}
+  else stageRoot=null;
+  if(stateIsConsole)await patchConfigIni({STAGING_ROOT:"/media/fat/"+STAGE_ROOT_NAME});
+  toast("Waiting library set to "+STAGE_ROOT_NAME);
+  if(systems.length){await loadGames($("#systemSel").value);await refreshQueue();}
+};
+
+// ---------- export .ics ----------
+function icsEscape(s){return String(s||"").replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");}
+function icsFold(line){ // fold long lines at 73 octets per RFC 5545 (continuation = CRLF + space)
+  let out="",s=line;
+  while(s.length>73){out+=s.slice(0,73)+"\r\n ";s=s.slice(73);}
+  return out+s;
+}
+function stamp(){return new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,"");} // YYYYMMDDTHHMMSSZ
+function nextDay(ymd){const d=new Date(ymd+"T00:00:00");d.setDate(d.getDate()+1);
+  return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());}
+
+async function exportIcs(){
+  const items=await getQueueItems();
+  if(!items.length){toast("Nothing scheduled to export.",true);return;}
+  const occ=await readOccasions();
+  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Dripfeed//Scheduler//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH","X-WR-CALNAME:Dripfeed game schedule"];
+  const dt=stamp();
+  let n=0;
+  for(const it of items){
+    const ymd=it.date.replace(/-/g,"");
+    const msg=occ[it.date]||"";
+    const notes=(msg?msg+"\n\n":"")+"System: "+it.sys+(msg?"\n(Custom banner shown on the console for "+it.date+".)":"");
+    const uid="dripfeed-"+ymd+"-"+it.sys+"-"+it.clean.replace(/[^A-Za-z0-9]/g,"").slice(0,40)+"-"+(n++)+"@dripfeed";
+    L.push("BEGIN:VEVENT");
+    L.push("UID:"+uid);
+    L.push("DTSTAMP:"+dt);
+    L.push("DTSTART;VALUE=DATE:"+ymd);
+    L.push("DTEND;VALUE=DATE:"+nextDay(it.date));
+    L.push("SUMMARY:"+icsEscape("🎮 "+it.clean+" ("+it.sys+")"));
+    L.push("DESCRIPTION:"+icsEscape(notes));
+    L.push("TRANSP:TRANSPARENT");
+    L.push("END:VEVENT");
+  }
+  L.push("END:VCALENDAR");
+  const ics=L.map(icsFold).join("\r\n")+"\r\n";
+  const blob=new Blob([ics],{type:"text/calendar;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download="dripfeed-schedule.ics";
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast("Exported "+items.length+" game"+(items.length>1?"s":"")+" to dripfeed-schedule.ics");
+}
+$("#exportIcs").onclick=exportIcs;
+
+// ---------- live note-file preview for the message field ----------
+$("#message").addEventListener("input",()=>{
+  const v=$("#message").value.trim();
+  $("#msgCount").textContent = v ? ("Menu folder → "+("_Dripfeed - "+v).slice(0,30)) : "";
+});
+
+// ---------- boot ----------
+if(!window.showDirectoryPicker){
+  $("#browserWarn").classList.remove("hidden");
+  $("#connectBtn").disabled=true;
+}
+</script>
+</body>
+</html>

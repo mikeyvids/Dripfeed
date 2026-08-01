@@ -1,0 +1,12 @@
+.beta-archive/
+.DS_Store
+._*
+_Dripfeed/
+Dripfeed-v*.zip
+Profiler/
+
+# Never commit a card dump, save data, credentials, or generated release archive.
+MiSTer_Data/
+*.img
+*.iso
+*.zip
