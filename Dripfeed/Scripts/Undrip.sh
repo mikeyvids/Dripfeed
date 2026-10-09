@@ -10,6 +10,17 @@ HELP="$DRIPFEED_ROOT/Scripts/.dripfeed"
 export DRIPFEED_INTERACTIVE=1
 [ -f "$HELP/dripfeed-common.sh" ] && . "$HELP/dripfeed-common.sh"
 
+# Restart only on a real MiSTer (never a desktop test machine, even as root).
+on_mister() {
+  [ "${DRIPFEED_NO_REBOOT:-0}" != 1 ] && [ "$DRIPFEED_ROOT" = /media/fat ] && [ -x /media/fat/MiSTer ] &&
+    case "$(uname -m 2>/dev/null)" in arm*) true ;; *) false ;; esac
+}
+restart() {
+  sync
+  if on_mister; then reboot 2>/dev/null || true
+  else echo; echo "  (not running on a MiSTer: restart skipped)"; fi
+}
+
 clear 2>/dev/null || printf '\033[2J\033[H'
 echo
 echo "  ================  DRIPFEED  -  UNDRIP (RESET)  ================"
@@ -23,9 +34,12 @@ if type df_confirm_any >/dev/null 2>&1; then
   echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
   if df_confirm_any 10; then
     echo; echo "  Resetting..."
-    "$HELP/dripfeed-engine.sh" --undrip
-    df_menu_countdown 5 "Rebooting" >/dev/null
-    sync; reboot 2>/dev/null || true
+    if "$HELP/dripfeed-engine.sh" --undrip; then
+      df_menu_countdown 5 "Rebooting" >/dev/null
+      restart
+    else
+      echo; echo "  Nothing was reset. Try again in a minute."; sleep 3
+    fi
   else
     echo; echo "  Cancelled - nothing changed."; sleep 2
   fi

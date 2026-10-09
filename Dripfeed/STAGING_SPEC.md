@@ -15,6 +15,10 @@ agree on. `tests/run.sh` is the conformance test; CI runs it on every change.
 - `<SYSTEM>` — the core's games-folder name exactly (`SNES`, `GENESIS`, `Saturn`, …).
 - The old `<GAMES_DIR>/<SYSTEM>/.dripfeed/` layout remains readable during
   upgrades, but new scheduling writes only to `STAGING_ROOT`.
+- `STAGING_ROOT` and `<GAMES_DIR>/<SYSTEM>` must be on the **same filesystem**
+  (the SD card). Dripfeed manages games in the SD card's `games/` only; a move
+  into or out of a system folder that is really USB, a network share, or another
+  mount is refused, not copied (§3).
 
 ### Firmware and support folders are never queue entries
 
@@ -43,20 +47,43 @@ Examples:
 .dripfeed-library/Saturn/2026-12-25_Shiny Forts III/     (folder: discs + Shiny Forts 3.m3u)
 ```
 
+Never valid queue entries, even with a correct prefix: names ending in `.crswap`
+(a browser's temporary swap file) and empty (0-byte) files. The engine holds and
+logs them instead of revealing them, and the web scheduler skips `.crswap` names.
+
 ## 3. Reveal rule
 
 - Due when `int(YYYYMMDD) <= int(today)`.
 - Reveal = **atomic rename** of the entry to `<GAMES_DIR>/<SYSTEM>/<FINAL_NAME>` (the
-  date prefix stripped). Same filesystem ⇒ `mv` is `rename(2)`, atomic.
+  date prefix stripped). Before every game move (reveal, request, migration, CLI,
+  Undrip) the engine checks that source and destination are on the same
+  filesystem, so the move is `rename(2)`. If they are not, it refuses and logs the
+  hold with nothing copied; `mv` must never fall back to copy+delete.
 - The engine **never overwrites** an existing destination — it skips and logs, so a
   game/save already present is never clobbered.
 - The browser never moves a multi-disc folder itself. With the whole card
   selected, it writes `Scripts/.dripfeed/schedule-requests.tsv`; the card-side
-  engine consumes that request with one same-filesystem `mv`. Re-date and return
+  engine consumes that request with one same-filesystem rename. Re-date and return
   requests use the same pattern. CUE and M3U references are checked again before
   reveal; missing referenced files place the folder on recovery hold.
-- A single-runner lock (`<STATE>/.lock`) ensures the boot daemon and a manual launch
-  never reveal the same queue simultaneously.
+- A single-runner lock (`<STATE>/.lock/`, created with an atomic `mkdir`) ensures
+  the boot daemon, a manual launch, Undrip, and the CLI scheduler never move games
+  at the same time. Inside it:
+
+  ```
+  .lock/owner   →   three lines: PID, boot ID, host name of the holder
+  .lock/ts      →   one line: when the lock was taken (Unix seconds)
+  ```
+
+  A holder that is still running on the current boot is never preempted, however
+  long it takes. A lock whose holder has exited, or that was left by an earlier
+  boot, is reclaimed. A lock with no `owner` file (an older Dripfeed, or one taken
+  from another machine) falls back to the old 10-minute age rule. A process removes
+  only a lock it owns. Undrip and the CLI wait briefly, then report "busy" and
+  change nothing.
+- After a successful reveal, with `TOUCH_ON_REVEAL=1`, the engine updates the
+  modification time of the revealed file (or of a folder and its top-level files)
+  once the reveal journal has cleared. Contents and names are unchanged.
 
 ## 4. Custom messages (occasions)
 
@@ -82,6 +109,39 @@ Examples:
   on must never rename the folder (frontends key on the path).
 - If the saved name no longer starts with the configured `SHOWCASE_PREFIX` (prefix
   changed in `config.ini`), the engine re-stamps once with today's default.
+- Every folder name the engine creates is also recorded, one name per line:
+
+  ```
+  <STATE>/showcase_names         →  every What's New folder name ever stamped
+  <STATE>/system_shortcut_dirs   →  per-system shortcut folder names used (§4c)
+  <STATE>/gotm_names             →  Game of the Month folders built
+  ```
+
+  Consolidation (merging an older What's New folder into the current one) and
+  Undrip use these records together with the default prefixes and a distinctive
+  configured prefix (at least three characters after `_` / `_@`), so a custom
+  prefix never leaves stale folders behind and Undrip removes only folders
+  Dripfeed created.
+- The optional Favorites mirror (`FAVORITES_MIRROR=1`) always writes into one
+  stable subfolder, `<FAVORITES_DIR>/_Dripfeed New/`. Older dated mirror folders
+  that hold only Dripfeed shortcuts are removed; other favorites are never touched.
+
+## 4c. Per-system shortcut folders (optional)
+
+```
+<GAMES_DIR>/<SYSTEM>/<SYSTEM_SHORTCUTS_DIR>/<TITLE>.mgl
+```
+
+`<TITLE>` is `<FINAL_NAME>` without its extension (a multi-disc folder keeps its
+folder name).
+
+- Written only when `SYSTEM_SHORTCUTS=1` (default `0`); `SYSTEM_SHORTCUTS_DIR`
+  defaults to `_Dripfeed New`.
+- Holds only `.mgl` shortcuts that mirror the What's New folder: no system prefix
+  in the name, newest `SHOWCASE_KEEP` per system, the same absolute target path.
+- It is generated output, not a game: neither scheduler may queue it, and the
+  engine never reveals or moves it. Undrip removes it, and the next run removes it
+  when `SYSTEM_SHORTCUTS=0`.
 
 ## 5. Invariants both schedulers must uphold
 
@@ -100,10 +160,15 @@ unschedule-requests.tsv → SYSTEM<TAB>FINAL_NAME
 ```
 
 On the next Dripfeed run, the engine validates the request and firmware guard,
-then uses same-filesystem `mv`. Scheduling an already queued name changes its
+then uses a same-filesystem rename (§3). Scheduling an already queued name changes its
 date; unscheduling returns it to `games/<SYSTEM>/`. A request remains in its
-ledger when a source is missing or a destination collision needs attention, and
-is removed only after the requested on-disk state is true.
+ledger when a source is missing, a destination collision needs attention, or the
+move would cross filesystems, and is removed only after the requested on-disk
+state is true.
+
+The browser never copies game data. In games-folder-only mode it may rename a
+single file with the File System Access `move()`; if that is refused, it reports
+the error and changes nothing.
 
 If you change any of the above, update this file, the engine, **both** schedulers, and
 `tests/run.sh` together.

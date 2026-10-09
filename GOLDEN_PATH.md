@@ -10,6 +10,9 @@ verified, complete these checks on a backed-up or disposable card.
 - On an upgraded card, run the migration-only engine once and confirm every old
   `games/<system>/.dripfeed/` entry moved to `/.dripfeed-library/<system>/`
   without revealing a due game. Confirm incomplete disc sets remain held.
+- After upgrading, confirm `linux/user-startup.sh` holds the new start-only hook
+  block (one copy). Reboot and power off from the menu, then confirm `boot.log`
+  was written by the boot only and no watcher started during shutdown.
 - Refresh the graphical frontend/library database and confirm no unreleased
   entry from `/.dripfeed-library/` appears in its system browser. A previously
   cached title may remain until that frontend completes its own rescan.
@@ -17,8 +20,66 @@ verified, complete these checks on a backed-up or disposable card.
 - Confirm firmware folders and Jaguar `.mrq` files never appear as games.
 - Confirm clean reveal names, What's New launch, and GOT'eM console + Arcade
   launch in the stock MiSTer menu.
+- Launch a multi-disc What's New shortcut (PSX or Saturn, `.m3u` + `.cue/.chd`)
+  and confirm the core boots disc 1; confirm the `.mgl` path does not end in
+  `.m3u`.
+- Launch What's New shortcuts for one Jaguar and one Neo Geo Pocket game, and one
+  Game Gear file kept in the Master System folder, on the current core builds.
+- Reveal one title containing `&` and one containing `'`; reboot twice and confirm
+  both What's New shortcuts survive and `gamelist.xml` still opens as valid XML.
+- Pick a GOT'eM Arcade game whose core name is a prefix of another core (for
+  example `jtcps1` beside `jtcps15`) and confirm the copied core is the right,
+  newest one and the spotlight launches.
+- In the stock core list, read the What's New folder row unselected and selected:
+  about 21 characters show before `<DIR>`, and the selected row scrolls the rest.
+- On a disposable card, bind-mount a USB drive folder over one scheduled system's
+  `games/<system>`, then repeat with a symlink to the USB drive instead. In both
+  cases confirm its reveal and browser requests are refused with a log line,
+  nothing is copied, and `--diag` warns. Separately, with a USB drive
+  holding `games/<system>` beside the SD card's, confirm `--diag` warns that
+  MiSTer browses the USB folder first.
+- Start a long manual pass over SSH, then open Undrip and the CLI scheduler from
+  a second session; confirm both report busy and move nothing until it finishes.
+- Leave `TOUCH_ON_REVEAL=1` and confirm a revealed file's date shows the reveal
+  time while the stock menu lists and launches it normally.
+- In a graphical frontend that builds its own library from system folders,
+  refresh its library after a reveal day and confirm the new games appear and
+  nothing from `/.dripfeed-library/` is listed. Set a test `POST_REVEAL_CMD` (for
+  example a script that appends a line to a file), reveal one game, and confirm
+  it ran once, its exit status is in `dripfeed.log`, and it never ran at shutdown.
+  Then schedule a visible game from the browser, run Scripts → Dripfeed, and
+  confirm it ran once more and the frontend no longer lists that game after its
+  refresh.
+- Turn on `SYSTEM_SHORTCUTS=1`, reveal games in two systems, refresh the
+  frontend's library, and confirm each system shows a `_Dripfeed New` folder whose
+  shortcuts launch. Confirm the stock core file browser shows that folder without
+  breaking normal browsing. Set it back to `0` and confirm the next run removes
+  every `_Dripfeed New` folder; run Undrip once with it on and confirm the same.
+- With `SYSTEM_SHORTCUTS=1`, pick a console GOT'eM game for this month, run
+  Scripts → Dripfeed (or `--gotm`), refresh the frontend, and confirm
+  `games/<SYSTEM>/_Game of the Month/` shows it and the shortcut launches. Change
+  the pick and confirm the old shortcut is gone; set the option to `0` and confirm
+  the folder is removed on the next run.
+- Rename the GOT'eM folder in the Scheduler's folder settings, run Scripts →
+  Dripfeed again, and confirm the menu folder and the system-folder shortcut both
+  move to the new name with nothing left under the old one.
 - Interrupt power once only on a disposable card, then confirm the next boot logs
   `RECOVERED reveal after interruption` and creates no duplicate.
+
+### Dripfeed Scheduler (browser)
+
+- On a disposable card, connect the whole card and schedule a few thousand games
+  across systems in one batch; confirm it completes in seconds and each request
+  file is written once.
+- Review a CSV with hundreds of unknown paths; confirm the tab stays responsive
+  and each NOT FOUND row offers a type-to-pick list.
+- Connect only the `games/` folder (limited mode) on Windows and macOS. Schedule
+  one large CHD with a preview or antivirus scan holding the file open, and
+  confirm the real error is shown, no `.crswap` file appears, and the game is not
+  moved or copied.
+- Export `.ics`, re-date one game, export again, and import both into one
+  calendar app; confirm the event moves rather than duplicating, and the optional
+  9 AM alert fires on the day.
 
 ## Profiler
 

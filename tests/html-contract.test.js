@@ -33,5 +33,16 @@ for (const [name, rel, expected] of pages) {
     if (/<script[^>]+src=/i.test(html) || /<link[^>]+href=["']https?:/i.test(html)) throw new Error("Back the Files Up: unexpected remote runtime resource");
     if (!html.includes("BACKUP_SCOPE=all-profiles") || !html.includes("Current player's complete profile") || !html.includes("isArmRclone") || !html.includes("remoteAuthReady")) throw new Error("Back the Files Up: missing complete-profile, ARM helper, or finished-auth validation boundary");
   }
+  if (name === "Dripfeed") {
+    // The browser renames or refuses; it never streams game data (no copy+delete fallback).
+    if (/\.stream\s*\(|pipeTo\s*\(/.test(scripts.join("\n"))) throw new Error("Dripfeed: scheduler must never stream-copy game data");
+    if (!html.includes("function applyMoveRequests") || !html.includes("function withStateLock")) throw new Error("Dripfeed: batched, serialized request-ledger writes missing");
+    if (!html.includes("function buildIcs") || !html.includes('<input id="icsAlarm" type="checkbox">') || !html.includes("Add a 9 AM alert on the day")) throw new Error("Dripfeed: .ics builder or its opt-in alert is missing");
+    if (/fetch\s*\(|XMLHttpRequest|WebSocket/.test(html)) throw new Error("Dripfeed: unexpected network API");
+  }
   console.log(`ok - ${name} HTML syntax and offline contract`);
 }
+// Browser-logic tests evaluate the scheduler's own code (ICS builder, request
+// ledgers, rename-only moves, folder inspection) against in-memory handles.
+require("child_process").execFileSync(process.execPath, [path.join(root, "Dripfeed/tests/scheduler-logic.test.js")], { stdio: "inherit" });
+console.log("ok - Dripfeed scheduler browser logic");
