@@ -37,8 +37,9 @@ SYSTEM_SHORTCUTS=0   # opt-in: also put each What's New shortcut in games/<SYSTE
                      # for graphical frontends that build their own library from system
                      # folders (refresh that library to see them). 0 removes them again.
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"
-POST_REVEAL_CMD=""   # optional command run once after a pass that revealed games (120 s
-                     # timeout, never at shutdown), e.g. to ask a frontend to refresh its library
+POST_REVEAL_CMD=""   # optional command run once after a run that revealed, hid or put back
+                     # games (120 s timeout, never at shutdown), e.g. to ask a frontend to
+                     # refresh its library
 TOUCH_ON_REVEAL=1    # 1 = a revealed game's file date becomes the reveal time
 GOTM=1               # build the Game of the Month menu folder (from gotm.tsv)
 GOTM_DIRNAME="_Game of the Month"  # "_@..." pins it to the top of the menu

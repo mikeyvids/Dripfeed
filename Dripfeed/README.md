@@ -228,9 +228,10 @@ settings, so it helps to know how these frontends see the card:
     kept waiting games inside `games/<SYSTEM>/.dripfeed/`, where some library tools
     listed them early with date-prefixed names. The upgrade moves them outside
     `games/`, and a refresh drops those stale entries.
-  - **After each reveal day**, refresh again to see the new games. If your frontend
-    offers a refresh command you can run on the MiSTer, put it in `POST_REVEAL_CMD`
-    and Dripfeed runs it for you after any pass that revealed something.
+  - **After each reveal day**, refresh again to see the new games, and after you
+    schedule games so they drop out of the list. If your frontend offers a refresh
+    command you can run on the MiSTer, put it in `POST_REVEAL_CMD` and Dripfeed
+    runs it for you after any run that revealed, hid or put back games.
 - **`SYSTEM_SHORTCUTS=1` adds a What's New folder inside each system folder.** Each
   reveal also gets an `.mgl` shortcut in `games/<SYSTEM>/_Dripfeed New/` (name set
   by `SYSTEM_SHORTCUTS_DIR`), named after the game without a system prefix and
@@ -325,7 +326,7 @@ DAILY=1              # also reveal once per calendar day while powered on
 WATCH_INTERVAL=3600  # seconds between day-change checks
 SYSTEM_SHORTCUTS=0   # 1 = also put What's New and GOT'eM shortcuts inside each system folder
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"   # that per-system folder's name
-POST_REVEAL_CMD=""   # optional command to run once after a pass that revealed games
+POST_REVEAL_CMD=""   # optional command to run once after a run that revealed, hid or put back games
 TOUCH_ON_REVEAL=1    # 1 = a revealed game's file date shows when it was revealed
 ```
 
@@ -345,14 +346,23 @@ are checked when read: a missing, non-numeric, or too-small number (for example
   scheduler's folder settings include the same switch. Read the caveats in
   [Graphical frontends with their own library](#graphical-frontends-with-their-own-library)
   before turning it on.
-- **`POST_REVEAL_CMD`** (default empty): a command Dripfeed runs once at the end of a
-  pass that revealed at least one game, for example a library-refresh script you
-  wrote for your frontend (`POST_REVEAL_CMD="/media/fat/Scripts/my-refresh.sh"`). It
-  runs through `sh -c` with a 120-second time limit, never from the shutdown path.
-  Its output goes to `Scripts/.dripfeed/post_reveal.log` and its exit status to
-  `dripfeed.log`. The command can read `DRIPFEED_REVEALED_COUNT` and
-  `DRIPFEED_REVEALED_SYSTEMS` to refresh only what changed. Dripfeed ships no
-  frontend-specific command.
+- **`POST_REVEAL_CMD`** (default empty): a command Dripfeed runs once at the end of
+  any run that changed what is in the system folders, for example a library-refresh
+  script you wrote for your frontend
+  (`POST_REVEAL_CMD="/media/fat/Scripts/my-refresh.sh"`). That means games revealed
+  (on schedule, or early with `remove`), games hidden (scheduled from the browser or
+  with `add`), games put back (unscheduled, or by Undrip), and Dripfeed's own
+  shortcuts inside system folders added or removed (`SYSTEM_SHORTCUTS`, including
+  GOT'eM). A run that changed nothing does not call it, and it only runs on the
+  MiSTer itself (never when you use the command-line scheduler on a computer with
+  the card mounted). At boot, games hidden
+  before the first reveal share one call with that reveal. It runs through `sh -c`
+  with a 120-second time limit, never from the shutdown path. Its output goes to
+  `Scripts/.dripfeed/post_reveal.log` and its exit status to `dripfeed.log`. The
+  command can read `DRIPFEED_REVEALED_COUNT`, `DRIPFEED_HIDDEN_COUNT`,
+  `DRIPFEED_RETURNED_COUNT`, `DRIPFEED_REVEALED_SYSTEMS` and
+  `DRIPFEED_CHANGED_SYSTEMS` (space-separated system folder names) to refresh only
+  what changed. Dripfeed ships no frontend-specific command.
 - **`TOUCH_ON_REVEAL`** (default `1`): after a reveal is safely recorded, updates the
   date of the revealed file (or of a disc folder and the files directly inside it).
   Contents are untouched. Set `0` to keep original dates.

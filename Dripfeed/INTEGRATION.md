@@ -71,12 +71,16 @@ reader of standard files. What to expect:
     see the new games."
 - **`POST_REVEAL_CMD` can run the refresh for you.** If your frontend offers a
   command or script that refreshes its library on the MiSTer, set it here.
-  Dripfeed runs it once (through `sh -c`) at the end of any pass that revealed at
-  least one game, with a 120-second time limit. Its output goes to
+  Dripfeed runs it once (through `sh -c`) at the end of any run that changed the
+  system folders: games revealed, games hidden by scheduling, games put back, or
+  Dripfeed's own system-folder shortcuts (What's New, GOT'eM) added or removed.
+  It has a 120-second time limit. Its output goes to
   `Scripts/.dripfeed/post_reveal.log` and its exit status to `dripfeed.log`; it
-  can read `DRIPFEED_REVEALED_COUNT` and `DRIPFEED_REVEALED_SYSTEMS` to refresh
-  only the systems that changed. It never runs from the shutdown path, and it is
-  empty by default. Dripfeed does not ship or guess a command for any particular
+  can read `DRIPFEED_REVEALED_COUNT`, `DRIPFEED_HIDDEN_COUNT`,
+  `DRIPFEED_RETURNED_COUNT`, `DRIPFEED_REVEALED_SYSTEMS` and
+  `DRIPFEED_CHANGED_SYSTEMS` to refresh only the systems that changed. It never
+  runs from the shutdown path, on a run that changed nothing, or on a computer
+  with the card mounted, and it is empty by default. Dripfeed does not ship or guess a command for any particular
   frontend.
 
   ```ini

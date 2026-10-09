@@ -47,6 +47,9 @@ verified, complete these checks on a backed-up or disposable card.
   nothing from `/.dripfeed-library/` is listed. Set a test `POST_REVEAL_CMD` (for
   example a script that appends a line to a file), reveal one game, and confirm
   it ran once, its exit status is in `dripfeed.log`, and it never ran at shutdown.
+  Then schedule a visible game from the browser, run Scripts → Dripfeed, and
+  confirm it ran once more and the frontend no longer lists that game after its
+  refresh.
 - Turn on `SYSTEM_SHORTCUTS=1`, reveal games in two systems, refresh the
   frontend's library, and confirm each system shows a `_Dripfeed New` folder whose
   shortcuts launch. Confirm the stock core file browser shows that folder without

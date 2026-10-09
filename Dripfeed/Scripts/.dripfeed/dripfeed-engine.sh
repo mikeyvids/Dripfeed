@@ -48,7 +48,7 @@ df_migrate_legacy_queues() {
       fi
       df_rename "$entry" "$stage/$base"; rc=$?
       if [ "$rc" -eq 0 ]; then
-        moved=$((moved+1)); df_log "LEGACY MIGRATION moved outside games/: $sys/$base"
+        moved=$((moved+1)); df_pass_hidden "$sys"; df_log "LEGACY MIGRATION moved outside games/: $sys/$base"
       else
         held=$((held+1)); df_log "LEGACY MIGRATION held: $sys/$base"
       fi
@@ -73,6 +73,7 @@ df_migrate_only() {
   fi
   df_migrate_legacy_queues; local rc=$?
   df_unlock
+  df_pass_flush
   return "$rc"
 }
 
@@ -131,7 +132,7 @@ df_process_unschedule_requests() {
     fi
     [ -d "$GAMES_DIR/$sys" ] || mkdir -p "$GAMES_DIR/$sys" 2>/dev/null || { printf '%s\t%s\n' "$sys" "$name" >> "$tmp"; continue; }
     df_rename "$staged" "$dest"; rc=$?
-    if [ "$rc" -eq 0 ]; then df_log "BROWSER UNSCHEDULE applied: $sys/$name"
+    if [ "$rc" -eq 0 ]; then df_pass_returned "$sys"; df_log "BROWSER UNSCHEDULE applied: $sys/$name"
     else
       printf '%s\t%s\n' "$sys" "$name" >> "$tmp"
       [ "$rc" -eq 2 ] && df_log "BROWSER UNSCHEDULE held (different drives): $sys/$name"
@@ -181,7 +182,7 @@ df_process_schedule_requests() {
       [ "$rc" -eq 0 ] && df_log "BROWSER REDATE applied: $d $sys/$name"
     elif [ -e "$source" ]; then
       df_rename "$source" "$dest"; rc=$?
-      [ "$rc" -eq 0 ] && df_log "BROWSER SCHEDULE applied: $d $sys/$name"
+      [ "$rc" -eq 0 ] && { df_pass_hidden "$sys"; df_log "BROWSER SCHEDULE applied: $d $sys/$name"; }
     else
       rc=1; df_log "BROWSER SCHEDULE held (source missing): $d $sys/$name"
     fi
@@ -533,13 +534,13 @@ df_run_reveal() {
     [ "$interactive" -eq 1 ] && df_announce "Dripfeed is busy finishing up — try again in a moment."
     return 2
   fi
-  DF_PASS_REVEALED=0; DF_PASS_SYSTEMS=""
   df_reveal_pass "$interactive"; rc=$?
   df_unlock
   # Optional user command (e.g. ask a frontend to refresh its library): once per
-  # pass that revealed something, always with a timeout, and after the lock is
-  # released so a slow command never blocks Dripfeed itself.
-  [ "$DF_PASS_REVEALED" -gt 0 ] && df_post_reveal "$DF_PASS_REVEALED" "$DF_PASS_SYSTEMS"
+  # pass that revealed, hid or returned games or changed shortcuts in system
+  # folders, always with a timeout, and after the lock is released so a slow
+  # command never blocks Dripfeed itself.
+  df_pass_flush
   return "$rc"
 }
 
@@ -631,9 +632,11 @@ EOF_DUE
     df_showcase_prepare
   fi
   rm -f "$revlist" 2>/dev/null
+  # Counted for POST_REVEAL_CMD (run once the lock is released).
+  DF_PASS_REVEALED=$((DF_PASS_REVEALED + revealed))
+  for rsys in $systems; do df_pass_reveal_sys "$rsys"; done
   df_showcase_finalize
   df_gotm_update
-  DF_PASS_REVEALED="$revealed"; DF_PASS_SYSTEMS="$systems"
   if [ "$interactive" -eq 1 ]; then
     [ "$held_xdev" -gt 0 ] && df_announce "HELD: $held_xdev game(s) are on a different drive than the waiting library. See --diag."
     df_announce "All caught up. Enjoy!"
@@ -678,6 +681,9 @@ df_watch() {
     df_unlock
   fi
   sleep "${BOOT_DELAY:-30}"
+  # Games hidden above are refreshed together with the boot pass when it can run
+  # now; otherwise (clock not set yet, or no reveal at boot) right away.
+  if [ "${REVEAL_AT_BOOT:-1}" -ne 1 ] || [ ! -d "$GAMES_DIR" ] || ! df_clock_ok; then df_pass_flush; fi
   # Wait until games/ is mounted AND the clock is synced (RTC/network time) before the
   # boot update runs — revealing on a 1970 clock is what created a wrong-dated folder.
   # We wait INDEFINITELY (no try-cap): the moment a current network clock appears, the
@@ -691,6 +697,7 @@ df_watch() {
   [ "$waited" -gt 0 ] && df_log "watch: ready after ${waited}s — running boot update"
   local day rc=0
   if [ "${REVEAL_AT_BOOT:-1}" -eq 1 ]; then df_run_reveal --silent; rc=$?; fi
+  [ "$rc" -eq 2 ] && df_pass_flush     # the boot pass was skipped: refresh for the early hides
   # A pass skipped because another process held the lock is retried later.
   [ "$rc" -eq 2 ] || df_today_int > "$DF_LASTDAY"
   [ "${DAILY:-1}" -eq 1 ] || { df_log "watch done (daily off)"; return 0; }
@@ -845,7 +852,7 @@ df_undrip_entry() {        # $1 entry  $2 system folder (with trailing /)  $3 sy
   else
     df_rename "$entry" "$sysdir$clean"; rc=$?
     case "$rc" in
-      0) DF_UNDRIP_N=$((DF_UNDRIP_N+1)) ;;
+      0) DF_UNDRIP_N=$((DF_UNDRIP_N+1)); df_pass_returned "$qsys" ;;
       2) echo "  DIFFERENT DRIVE - left in the waiting library: $qsys/$clean"; DF_UNDRIP_HELD=$((DF_UNDRIP_HELD+1)) ;;
       *) echo "  could not restore (left where it is): $qsys/$clean"; DF_UNDRIP_HELD=$((DF_UNDRIP_HELD+1)) ;;
     esac
@@ -916,6 +923,10 @@ df_undrip() {
   [ "$DF_UNDRIP_HELD" -eq 0 ] || echo "  held $DF_UNDRIP_HELD item(s) safely (see above; $conflict_root holds quarantined copies)."
   # 2) Remove every menu folder Dripfeed created.
   df_undrip_folders
+  # A frontend's library needs one refresh for the games put back and the
+  # shortcut folders removed; this is the last run, so it happens here, before
+  # the state folder (and its log) goes.
+  df_pass_flush
   # 3) Remove the boot hook.
   "$DF_HELP/dripfeed-install.sh" --uninstall >/dev/null 2>&1
   # 4) Remove the visible Undrip launcher and all state + helper scripts. Only
@@ -943,7 +954,7 @@ case "${1:-}" in
                       df_lock_wait || { echo "$DF_BUSY_MSG"; exit 1; }
                       if [ "$1" = --tidy ]; then df_showcase_prepare; df_write_gamelist "$SHOWCASE_DIR"
                       else df_gotm_update; fi
-                      df_unlock ;;
+                      df_unlock; df_pass_flush ;;
   --undrip)           df_undrip ;;
   --diag)             df_diag ;;
   -h|--help)          echo "usage: dripfeed-engine.sh [--watch|--auto|--reveal|--pending|--migrate|--tidy|--undrip|--diag]" ;;

@@ -24,6 +24,16 @@
   next month) and moves its system-folder shortcuts with it; folders built under
   the old name are removed if they hold only Dripfeed's shortcuts. `GOTM=0`
   still just stops building: what is there stays as it was.
+- **`POST_REVEAL_CMD` also runs after games are hidden or put back.** A frontend
+  with its own library kept listing games that had just been scheduled (and no
+  longer launched) until its next refresh. The command now runs once after any
+  run that changed the system folders: games revealed, hidden (browser requests,
+  `add`, an old in-games queue moved), put back (unscheduled, Undrip), or
+  Dripfeed's What's New and GOT'eM shortcuts inside system folders added or
+  removed. Never on a run that changed nothing, never at shutdown. At boot, games
+  hidden before the first reveal share one call with it. New variables:
+  `DRIPFEED_HIDDEN_COUNT`, `DRIPFEED_RETURNED_COUNT` and
+  `DRIPFEED_CHANGED_SYSTEMS`.
 - 1.4.0 was a test build that was never published; this entry and 1.4.0's below
   together describe the changes since 1.3.2.
 

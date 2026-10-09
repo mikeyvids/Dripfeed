@@ -26,6 +26,7 @@ mkdir -p "$ROOT/Scripts/.dripfeed" "$ROOT/games/GENESIS" "$ROOT/games/Saturn" "$
 cp "$SRC"/*.sh "$ROOT/Scripts/.dripfeed/"
 printf '#!/bin/sh\n' > "$ROOT/linux/_user-startup.sh"
 export DRIPFEED_ROOT="$ROOT" DRIPFEED_INTERACTIVE=0 DRIPFEED_LOCK_WAIT=1
+export DRIPFEED_POST_REVEAL_ANYWHERE=1   # fake cards are not /media/fat: let POST_REVEAL_CMD run
 TODAY="$(date +%Y-%m-%d)"; MONTH_NOW="$(date +%Y-%m)"
 # Helpers for the isolated fake cards used by the later sections.
 scratch(){ local d; d="$(mktemp -d)"; CARDS="$CARDS $d"; eval "$1=\$d"; }
@@ -643,22 +644,60 @@ eng "$CR" --gotm >/dev/null 2>&1
 ROUT="$(sch "$CR" add NES 2099-01-01 "$CR/games/NES/_Picks #1 - $(date +%b)" 2>&1)"
 chk "a GOT'eM name with # is built and guarded under its full name" '[ -f "$CR/games/NES/_Picks #1 - $(date +%b)/Pick Two.mgl" ] && [ -z "$(ls -d "$CR"/games/NES/_New* 2>/dev/null)" ] && [ -z "$(ls -d "$CR"/_New* 2>/dev/null)" ] && printf "%s\n" "$ROUT" | grep -q "shortcut folder"'
 
-echo "== POST_REVEAL_CMD: once per pass that revealed games, with a timeout =="
-newcard CQ; mkdir -p "$CQ/games/SNES" "$CQ/games/NES"
-printf "POST_REVEAL_CMD = 'echo \"#\$DRIPFEED_REVEALED_COUNT \$DRIPFEED_REVEALED_SYSTEMS\" >> \"%s/post.out\"'\n" "$CQ" >> "$CQ/Scripts/.dripfeed/config.ini"
+echo "== POST_REVEAL_CMD: once per run that revealed, hid or returned games, with a timeout =="
+newcard CQ; mkdir -p "$CQ/games/SNES" "$CQ/games/NES"; QOUT="$CQ/post.out"; QREQ="$CQ/Scripts/.dripfeed"
+printf "POST_REVEAL_CMD = 'echo \"#\$DRIPFEED_REVEALED_COUNT \$DRIPFEED_REVEALED_SYSTEMS|H\$DRIPFEED_HIDDEN_COUNT|B\$DRIPFEED_RETURNED_COUNT|C\$DRIPFEED_CHANGED_SYSTEMS\" >> \"%s\"'\n" "$QOUT" >> "$QREQ/config.ini"
+qlines(){ if [ -f "$QOUT" ]; then wc -l < "$QOUT" | tr -d " "; else echo 0; fi; }
 chk "a quoted command may contain # (it is not a comment there)" 'lib "$CQ" "printf %s \"\$POST_REVEAL_CMD\"" | grep -q "echo \"#"'
 eng "$CQ" --auto >/dev/null 2>&1
-chk "not run on a pass that revealed nothing" '[ ! -e "$CQ/post.out" ]'
-echo a > "$CQ/games/SNES/One.sfc"; echo b > "$CQ/games/NES/Two.nes"
-sch "$CQ" add SNES today "$CQ/games/SNES/One.sfc" >/dev/null 2>&1; sch "$CQ" add NES today "$CQ/games/NES/Two.nes" >/dev/null 2>&1
+chk "not run on a pass that changed nothing" '[ ! -e "$QOUT" ]'
+echo a > "$CQ/games/SNES/One.sfc"; echo b > "$CQ/games/NES/Two.nes"; echo x > "$CQ/games/NES/Extra.nes"
+sch "$CQ" add SNES today "$CQ/games/SNES/One.sfc" >/dev/null 2>&1; sch "$CQ" add NES today "$CQ/games/NES/Two.nes" "$CQ/games/NES/Extra.nes" >/dev/null 2>&1
+chk "a command-line schedule runs it once per command, for the games it hid" '[ "$(qlines)" = 2 ] && [ "$(sed -n 1p "$QOUT")" = "#0 |H1|B0|CSNES" ] && [ "$(sed -n 2p "$QOUT")" = "#0 |H2|B0|CNES" ]'
+sch "$CQ" add NES 2099-01-01 "$CQ/.dripfeed-library/NES/$(date +%Y-%m-%d)_Extra.nes" >/dev/null 2>&1
+chk "re-dating a hidden game changes nothing in sight: not run" '[ "$(qlines)" = 2 ] && [ -e "$CQ/.dripfeed-library/NES/2099-01-01_Extra.nes" ]'
 eng "$CQ" --auto >/dev/null 2>&1
-chk "run exactly once at the end of a pass that revealed games; exit status logged" '[ "$(wc -l < "$CQ/post.out" | tr -d " ")" = 1 ] && grep -Eq "^#2 (NES SNES|SNES NES)$" "$CQ/post.out" && grep -q "POST_REVEAL_CMD exit status 0" "$CQ/Scripts/.dripfeed/dripfeed.log"'
-echo c > "$CQ/games/SNES/Three.sfc"; sch "$CQ" add SNES today "$CQ/games/SNES/Three.sfc" >/dev/null 2>&1
+chk "run exactly once at the end of a pass that revealed games; exit status logged" '[ "$(qlines)" = 3 ] && sed -n 3p "$QOUT" | grep -Eq "^#2 (NES SNES|SNES NES)\|H0\|B0\|C(NES SNES|SNES NES)$" && grep -q "POST_REVEAL_CMD exit status 0" "$QREQ/dripfeed.log"'
+echo h > "$CQ/games/SNES/Browser Hide.sfc"
+printf '2099-02-02\tSNES\tBrowser Hide.sfc\n' > "$QREQ/schedule-requests.tsv"; eng "$CQ" --auto >/dev/null 2>&1
+chk "a browser schedule request applied on a pass that reveals nothing runs it once for the hidden game" '[ "$(qlines)" = 4 ] && [ "$(sed -n 4p "$QOUT")" = "#0 |H1|B0|CSNES" ] && [ -e "$CQ/.dripfeed-library/SNES/2099-02-02_Browser Hide.sfc" ]'
+printf 'SNES\tBrowser Hide.sfc\n' > "$QREQ/unschedule-requests.tsv"; eng "$CQ" --auto >/dev/null 2>&1
+chk "a browser unschedule request (game put back) runs it once" '[ "$(qlines)" = 5 ] && [ "$(sed -n 5p "$QOUT")" = "#0 |H0|B1|CSNES" ] && [ -f "$CQ/games/SNES/Browser Hide.sfc" ]'
+sch "$CQ" remove NES 2099-01-01_Extra.nes >/dev/null 2>&1
+chk "revealing early from the command line runs it once" '[ "$(qlines)" = 6 ] && [ "$(sed -n 6p "$QOUT")" = "#1 NES|H0|B0|CNES" ] && [ -f "$CQ/games/NES/Extra.nes" ]'
+echo c > "$CQ/games/SNES/Three.sfc"; sch "$CQ" add SNES today "$CQ/games/SNES/Three.sfc" >/dev/null 2>&1; QN="$(qlines)"
 DRIPFEED_ROOT="$CQ" sh "$CQ/linux/user-startup.sh" stop >/dev/null 2>&1; sleep 1
-chk "never run from the shutdown hook" '[ "$(wc -l < "$CQ/post.out" | tr -d " ")" = 1 ] && [ ! -e "$CQ/games/SNES/Three.sfc" ]'
-printf 'POST_REVEAL_CMD="sleep 5"\n' >> "$CQ/Scripts/.dripfeed/config.ini"
+chk "never run from the shutdown hook" '[ "$(qlines)" = "$QN" ] && [ ! -e "$CQ/games/SNES/Three.sfc" ]'
+echo o > "$CQ/games/SNES/Off Device.sfc"; QN="$(qlines)"
+DRIPFEED_POST_REVEAL_ANYWHERE=0 sch "$CQ" add SNES 2099-01-01 "$CQ/games/SNES/Off Device.sfc" >/dev/null 2>&1
+chk "on a computer with the card mounted (not /media/fat) it is never run, only logged" '[ "$(qlines)" = "$QN" ] && grep -q "POST_REVEAL_CMD not run: this is not the MiSTer itself (0 revealed, 1 hidden" "$QREQ/dripfeed.log" && [ ! -e "$CQ/games/SNES/Off Device.sfc" ]'
+printf 'POST_REVEAL_CMD="sleep 5"\n' >> "$QREQ/config.ini"
 DRIPFEED_POST_REVEAL_TIMEOUT=1 eng "$CQ" --auto >/dev/null 2>&1
-chk "a slow command is stopped by the timeout and logged" 'grep -q "POST_REVEAL_CMD timed out after 1s" "$CQ/Scripts/.dripfeed/dripfeed.log" && [ -f "$CQ/games/SNES/Three.sfc" ]'
+chk "a slow command is stopped by the timeout and logged" 'grep -q "POST_REVEAL_CMD timed out after 1s" "$QREQ/dripfeed.log" && [ -f "$CQ/games/SNES/Three.sfc" ]'
+
+echo "== POST_REVEAL_CMD: boot, GOT'eM system shortcuts and Undrip =="
+newcard CB; mkdir -p "$CB/games/SNES" "$CB/games/NES"; BOUT="$CB/post.out"; BREQ="$CB/Scripts/.dripfeed"
+printf "POST_REVEAL_CMD='echo \"#\$DRIPFEED_REVEALED_COUNT|H\$DRIPFEED_HIDDEN_COUNT|B\$DRIPFEED_RETURNED_COUNT|C\$DRIPFEED_CHANGED_SYSTEMS\" >> \"%s\"'\nBOOT_DELAY=0\nDAILY=0\n" "$BOUT" >> "$BREQ/config.ini"
+blines(){ if [ -f "$BOUT" ]; then wc -l < "$BOUT" | tr -d " "; else echo 0; fi; }
+echo h > "$CB/games/SNES/Boot Hide.sfc"; echo r > "$CB/games/NES/Boot Reveal.nes"
+sch "$CB" add NES today "$CB/games/NES/Boot Reveal.nes" >/dev/null 2>&1; : > "$BOUT"
+printf '2099-03-03\tSNES\tBoot Hide.sfc\n' > "$BREQ/schedule-requests.tsv"
+eng "$CB" --watch >/dev/null 2>&1
+chk "at boot, games hidden early and games revealed by the boot pass share ONE run" '[ "$(blines)" = 1 ] && grep -Eq "^#1\|H1\|B0\|C(NES SNES|SNES NES)$" "$BOUT" && [ -f "$CB/games/NES/Boot Reveal.nes" ] && [ ! -e "$CB/games/SNES/Boot Hide.sfc" ]'
+echo h2 > "$CB/games/SNES/Boot Hide 2.sfc"; printf '2099-03-03\tSNES\tBoot Hide 2.sfc\n' > "$BREQ/schedule-requests.tsv"
+printf 'REVEAL_AT_BOOT=0\n' >> "$BREQ/config.ini"; : > "$BOUT"
+eng "$CB" --watch >/dev/null 2>&1
+chk "with no reveal at boot, games hidden early still get their run" '[ "$(blines)" = 1 ] && [ "$(cat "$BOUT")" = "#0|H1|B0|CSNES" ]'
+sed_in_place '/^REVEAL_AT_BOOT=0$/d' "$BREQ/config.ini"
+echo p > "$CB/games/NES/Pick.nes"; printf '%s\tgames/NES/Pick.nes\n' "$MONTH_NOW" > "$BREQ/gotm.tsv"; printf 'SYSTEM_SHORTCUTS=1\n' >> "$BREQ/config.ini"
+: > "$BOUT"; eng "$CB" --gotm >/dev/null 2>&1
+chk "a GOT'eM shortcut added to a system folder runs it (counts 0, the system named)" '[ -f "$CB/games/NES/_Game of the Month/Pick.mgl" ] && grep -q "^#0|H0|B0|C.*NES" "$BOUT"'
+: > "$BOUT"; eng "$CB" --auto >/dev/null 2>&1
+chk "the What's New shortcut backfilled on the next pass runs it once" '[ "$(blines)" = 1 ] && [ -f "$CB/games/NES/_Dripfeed New/Boot Reveal.mgl" ]'
+: > "$BOUT"; eng "$CB" --gotm >/dev/null 2>&1; eng "$CB" --auto >/dev/null 2>&1
+chk "unchanged GOT'eM and nothing due: not run again" '[ "$(blines)" = 0 ]'
+: > "$BOUT"; eng "$CB" --undrip >/dev/null 2>&1
+chk "Undrip runs it once for the games put back and the shortcut folders removed" '[ "$(blines)" = 1 ] && grep -Eq "^#0\|H0\|B2\|C" "$BOUT" && [ -f "$CB/games/SNES/Boot Hide.sfc" ] && [ -f "$CB/games/SNES/Boot Hide 2.sfc" ] && [ ! -e "$CB/games/NES/_Game of the Month" ]'
 
 echo "== TOUCH_ON_REVEAL: the reveal time becomes the file date; contents unchanged =="
 newcard CT; mkdir -p "$CT/games/SNES" "$CT/games/PSX/Old Set"

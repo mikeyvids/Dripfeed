@@ -131,7 +131,7 @@ SYSTEM_SHORTCUTS=0     # (opt-in) also mirror each What's New shortcut into
                        # graphical frontends which build their own library from system
                        # folders can list after their library is refreshed.
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"
-POST_REVEAL_CMD=""     # optional shell command run ONCE after a pass that revealed games
+POST_REVEAL_CMD=""     # optional shell command run ONCE after a run that revealed, hid or returned games
                        # (with a 120 s timeout; never at shutdown). Use it to ask a
                        # frontend to refresh its library.
 TOUCH_ON_REVEAL=1      # 1 = set a revealed game's file date to the reveal time
@@ -1313,7 +1313,7 @@ df_system_shortcut_add() {   # $1 = system folder  $2 = revealed path
   [ -d "$GAMES_DIR/$sys" ] || return 0
   title="${item##*/}"; [ -d "$item" ] || title="${title%.*}"
   df_record_add "$DF_SYSDIRS" "$SYSTEM_SHORTCUTS_DIR"
-  df_make_mgl "$GAMES_DIR/$sys/$SYSTEM_SHORTCUTS_DIR" "$sys" "$item" "$title"
+  df_make_mgl "$GAMES_DIR/$sys/$SYSTEM_SHORTCUTS_DIR" "$sys" "$item" "$title" && df_pass_changed "$sys"
 }
 # For each .mgl given, print "D|U<TAB>target path<TAB>file" in ONE awk pass (the
 # MiSTer's slow CPU pays per process): D = it launches a game Dripfeed revealed
@@ -1341,12 +1341,13 @@ df_mgl_scan() {
 # itself if that left it empty. A system folder may share its name with something
 # the user made: user files are never deleted.
 df_remove_system_shortcuts() {
-  local dir="$1" m kind path files=()
+  local dir="$1" m kind path rel files=()
   [ -d "$dir" ] || return 0
+  rel="${dir#"$GAMES_DIR"/}"
   for m in "$dir"/*.mgl; do [ -f "$m" ] && files[${#files[@]}]="$m"; done
   if [ "${#files[@]}" -gt 0 ]; then
     while IFS=$'\t' read -r kind path m; do
-      [ "$kind" = D ] && [ -n "$m" ] && rm -f "$m"
+      [ "$kind" = D ] && [ -n "$m" ] && rm -f "$m" && df_pass_changed "${rel%%/*}"
     done <<EOF_SCAN
 $(df_mgl_scan "${files[@]}")
 EOF_SCAN
@@ -1390,7 +1391,7 @@ df_system_shortcuts_finalize() {
         d="$GAMES_DIR/$sys/$SYSTEM_SHORTCUTS_DIR"
         [ -e "$d/$title.mgl" ] && continue
         [ -d "$d" ] || mkdir -p "$d"
-        cp -p "$m" "$d/$title.mgl" 2>/dev/null && df_record_add "$DF_SYSDIRS" "$SYSTEM_SHORTCUTS_DIR"
+        cp -p "$m" "$d/$title.mgl" 2>/dev/null && { df_record_add "$DF_SYSDIRS" "$SYSTEM_SHORTCUTS_DIR"; df_pass_changed "$sys"; }
       done <<EOF_SCAN
 $(df_mgl_scan "${files[@]}")
 EOF_SCAN
@@ -1400,18 +1401,20 @@ EOF_SCAN
   # the newest SHOWCASE_KEEP. Anything else in the folder is left alone.
   for d in "$GAMES_DIR"/*/"$SYSTEM_SHORTCUTS_DIR"; do
     [ -d "$d" ] || continue
+    sys="${d#"$GAMES_DIR"/}"; sys="${sys%%/*}"
     files=(); mine=()
     for m in "$d"/*.mgl; do [ -f "$m" ] && files[${#files[@]}]="$m"; done
     if [ "${#files[@]}" -gt 0 ]; then
       while IFS=$'\t' read -r kind path m; do
         [ "$kind" = D ] && [ -n "$m" ] || continue
-        if [ ! -e "$path" ]; then rm -f "$m"; df_log "pruned orphan: ${m#"$GAMES_DIR"/}"; continue; fi
+        if [ ! -e "$path" ]; then rm -f "$m"; df_pass_changed "$sys"; df_log "pruned orphan: ${m#"$GAMES_DIR"/}"; continue; fi
         mine[${#mine[@]}]="$m"
       done <<EOF_SCAN
 $(df_mgl_scan "${files[@]}")
 EOF_SCAN
     fi
     if [ "${#mine[@]}" -gt "$keep" ]; then
+      df_pass_changed "$sys"
       ls -1t -- "${mine[@]}" 2>/dev/null | tail -n +$((keep + 1)) | while IFS= read -r m; do rm -f "$m"; done
     fi
     rmdir "$d" 2>/dev/null || true      # an empty shortcut folder is not left behind
@@ -1438,7 +1441,7 @@ df_gotm_mirror_clear() {   # $1 = GOT'eM folder base to clear; empty = every one
     [ -n "$f" ] || continue
     if [ -n "$want" ] && [ "$base" != "$want" ]; then keep="$keep$base"$'\t'"$f"$'\n'; continue; fi
     case "$f" in "$GAMES_DIR"/*/*/*.mgl) ;; *) continue ;; esac
-    [ -f "$f" ] && rm -f "$f"
+    if [ -f "$f" ]; then dir="${f#"$GAMES_DIR"/}"; rm -f "$f" && df_pass_changed "${dir%%/*}"; fi
     dir="${f%/*}"; rm -f "$dir/.DS_Store" "$dir"/._* 2>/dev/null
     rmdir "$dir" 2>/dev/null && df_log "removed GOT'eM system shortcut folder: ${dir#"$GAMES_DIR"/}"
   done < "$DF_GOTM_MIRRORS"
@@ -1483,6 +1486,7 @@ df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (rel
   [ -d "$dir" ] || made=1
   if df_make_mgl "$dir" "$sys" "$item" "$title"; then
     grep -qxF -- "$base"$'\t'"$out" "$DF_GOTM_MIRRORS" 2>/dev/null || printf '%s\t%s\n' "$base" "$out" >> "$DF_GOTM_MIRRORS"
+    df_pass_changed "$sys"
     df_log "GOTM ($base): system shortcut ${out#"$GAMES_DIR"/}"
   elif [ "$made" -eq 1 ]; then
     rmdir "$dir" 2>/dev/null
@@ -1502,18 +1506,54 @@ df_gotm_mirror_ensure() {  # same arguments; adds the shortcut only if this fold
   df_gotm_mirror_add "$@"
 }
 
-# ---- Optional command after a pass that revealed games ------------------------------
-# POST_REVEAL_CMD runs ONCE, at the end of a reveal pass that revealed at least one
-# game, with a timeout. It never runs from the shutdown hook (the engine does not run
-# at shutdown at all). Its output goes to post_reveal.log; the exit status is logged.
-# The command sees DRIPFEED_REVEALED_COUNT and DRIPFEED_REVEALED_SYSTEMS.
-df_post_reveal() {
-  local count="$1" systems="$2" t="${DRIPFEED_POST_REVEAL_TIMEOUT:-120}" rc pid w
+# ---- Optional command after games change in the system folders ---------------------
+# A frontend with its own game library lists a snapshot of the system folders, so it
+# needs a refresh whenever a Dripfeed run changes them: games revealed (or revealed
+# early from the command line), games hidden (scheduled from the browser or the
+# command line, or moved from an old in-games queue), games put back (unscheduled,
+# Undrip), or Dripfeed's own shortcuts inside system folders added or removed
+# (What's New, GOT'eM). Each run counts what it changed and then calls df_pass_flush
+# ONCE, after releasing the lock, so POST_REVEAL_CMD runs at most once per run and
+# never when nothing changed, and only on the MiSTer itself. It never runs from the
+# shutdown hook (the engine does not run at shutdown at all), always with a timeout; its output goes to
+# post_reveal.log and the exit status is logged. The command sees:
+#   DRIPFEED_REVEALED_COUNT   games revealed          DRIPFEED_REVEALED_SYSTEMS  their systems
+#   DRIPFEED_HIDDEN_COUNT     games hidden            DRIPFEED_RETURNED_COUNT    games put back
+#   DRIPFEED_CHANGED_SYSTEMS  every system folder whose contents changed (space-separated)
+DF_PASS_REVEALED=0; DF_PASS_HIDDEN=0; DF_PASS_RETURNED=0; DF_PASS_SYSTEMS=""; DF_PASS_CHANGED=""
+df_pass_changed() {   # $1 = system folder whose contents changed
+  [ -n "$1" ] || return 0
+  case " $DF_PASS_CHANGED " in *" $1 "*) ;; *) DF_PASS_CHANGED="${DF_PASS_CHANGED:+$DF_PASS_CHANGED }$1" ;; esac
+}
+df_pass_reveal_sys() { # $1 = system folder that had games revealed
+  [ -n "$1" ] || return 0
+  case " $DF_PASS_SYSTEMS " in *" $1 "*) ;; *) DF_PASS_SYSTEMS="${DF_PASS_SYSTEMS:+$DF_PASS_SYSTEMS }$1" ;; esac
+  df_pass_changed "$1"
+}
+df_pass_revealed() { DF_PASS_REVEALED=$((DF_PASS_REVEALED+1)); df_pass_reveal_sys "$1"; }
+df_pass_hidden()   { DF_PASS_HIDDEN=$((DF_PASS_HIDDEN+1)); df_pass_changed "$1"; }
+df_pass_returned() { DF_PASS_RETURNED=$((DF_PASS_RETURNED+1)); df_pass_changed "$1"; }
+df_pass_flush() {     # run POST_REVEAL_CMD for everything counted so far, then count afresh
+  local r="$DF_PASS_REVEALED" h="$DF_PASS_HIDDEN" b="$DF_PASS_RETURNED" s="$DF_PASS_SYSTEMS" c="$DF_PASS_CHANGED"
+  DF_PASS_REVEALED=0; DF_PASS_HIDDEN=0; DF_PASS_RETURNED=0; DF_PASS_SYSTEMS=""; DF_PASS_CHANGED=""
+  [ "$r" -gt 0 ] || [ "$h" -gt 0 ] || [ "$b" -gt 0 ] || [ -n "$c" ] || return 0
+  df_post_reveal "$r" "$s" "$h" "$b" "$c"
+}
+df_post_reveal() {    # $1 revealed  $2 their systems  $3 hidden  $4 returned  $5 changed systems
+  local count="${1:-0}" systems="${2:-}" hidden="${3:-0}" returned="${4:-0}" changed="${5:-$2}"
+  local t="${DRIPFEED_POST_REVEAL_TIMEOUT:-120}" rc pid w
   [ -n "${POST_REVEAL_CMD:-}" ] || return 0
-  [ "$count" -gt 0 ] 2>/dev/null || return 0
+  # The command is meant for the MiSTer (a frontend running there). The command-line
+  # scheduler and --migrate also run on a computer with the card mounted: never
+  # run it there (DRIPFEED_POST_REVEAL_ANYWHERE=1 allows it, e.g. for tests).
+  if [ "${DRIPFEED_POST_REVEAL_ANYWHERE:-0}" != 1 ] && { [ "$DF_ROOT" != /media/fat ] || [ ! -x /media/fat/MiSTer ]; }; then
+    df_log "POST_REVEAL_CMD not run: this is not the MiSTer itself ($count revealed, $hidden hidden, $returned returned)"
+    return 0
+  fi
   case "$t" in ''|*[!0-9]*|0) t=120 ;; esac
-  df_log "POST_REVEAL_CMD start ($count revealed: $systems)"
-  export DRIPFEED_REVEALED_COUNT="$count" DRIPFEED_REVEALED_SYSTEMS="$systems"
+  df_log "POST_REVEAL_CMD start ($count revealed, $hidden hidden, $returned returned: ${changed:-shortcuts only})"
+  export DRIPFEED_REVEALED_COUNT="$count" DRIPFEED_REVEALED_SYSTEMS="$systems" \
+         DRIPFEED_HIDDEN_COUNT="$hidden" DRIPFEED_RETURNED_COUNT="$returned" DRIPFEED_CHANGED_SYSTEMS="$changed"
   if timeout -k 5 1 true >/dev/null 2>&1; then
     # GNU coreutils (MiSTer): TERM to the whole process group, KILL 5 s later if
     # the command ignores TERM, so a stuck command can never hang the pass.
@@ -1527,7 +1567,7 @@ df_post_reveal() {
     { kill "$w"; wait "$w"; } 2>/dev/null
     { [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; } && rc=124
   fi
-  unset DRIPFEED_REVEALED_COUNT DRIPFEED_REVEALED_SYSTEMS
+  unset DRIPFEED_REVEALED_COUNT DRIPFEED_REVEALED_SYSTEMS DRIPFEED_HIDDEN_COUNT DRIPFEED_RETURNED_COUNT DRIPFEED_CHANGED_SYSTEMS
   if [ "$rc" -eq 124 ]; then df_log "POST_REVEAL_CMD timed out after ${t}s (exit status 124)"
   else df_log "POST_REVEAL_CMD exit status $rc"; fi
   return 0
@@ -1594,7 +1634,7 @@ df_migrate_legacy_queues() {
       fi
       df_rename "$entry" "$stage/$base"; rc=$?
       if [ "$rc" -eq 0 ]; then
-        moved=$((moved+1)); df_log "LEGACY MIGRATION moved outside games/: $sys/$base"
+        moved=$((moved+1)); df_pass_hidden "$sys"; df_log "LEGACY MIGRATION moved outside games/: $sys/$base"
       else
         held=$((held+1)); df_log "LEGACY MIGRATION held: $sys/$base"
       fi
@@ -1619,6 +1659,7 @@ df_migrate_only() {
   fi
   df_migrate_legacy_queues; local rc=$?
   df_unlock
+  df_pass_flush
   return "$rc"
 }
 
@@ -1677,7 +1718,7 @@ df_process_unschedule_requests() {
     fi
     [ -d "$GAMES_DIR/$sys" ] || mkdir -p "$GAMES_DIR/$sys" 2>/dev/null || { printf '%s\t%s\n' "$sys" "$name" >> "$tmp"; continue; }
     df_rename "$staged" "$dest"; rc=$?
-    if [ "$rc" -eq 0 ]; then df_log "BROWSER UNSCHEDULE applied: $sys/$name"
+    if [ "$rc" -eq 0 ]; then df_pass_returned "$sys"; df_log "BROWSER UNSCHEDULE applied: $sys/$name"
     else
       printf '%s\t%s\n' "$sys" "$name" >> "$tmp"
       [ "$rc" -eq 2 ] && df_log "BROWSER UNSCHEDULE held (different drives): $sys/$name"
@@ -1727,7 +1768,7 @@ df_process_schedule_requests() {
       [ "$rc" -eq 0 ] && df_log "BROWSER REDATE applied: $d $sys/$name"
     elif [ -e "$source" ]; then
       df_rename "$source" "$dest"; rc=$?
-      [ "$rc" -eq 0 ] && df_log "BROWSER SCHEDULE applied: $d $sys/$name"
+      [ "$rc" -eq 0 ] && { df_pass_hidden "$sys"; df_log "BROWSER SCHEDULE applied: $d $sys/$name"; }
     else
       rc=1; df_log "BROWSER SCHEDULE held (source missing): $d $sys/$name"
     fi
@@ -2079,13 +2120,13 @@ df_run_reveal() {
     [ "$interactive" -eq 1 ] && df_announce "Dripfeed is busy finishing up — try again in a moment."
     return 2
   fi
-  DF_PASS_REVEALED=0; DF_PASS_SYSTEMS=""
   df_reveal_pass "$interactive"; rc=$?
   df_unlock
   # Optional user command (e.g. ask a frontend to refresh its library): once per
-  # pass that revealed something, always with a timeout, and after the lock is
-  # released so a slow command never blocks Dripfeed itself.
-  [ "$DF_PASS_REVEALED" -gt 0 ] && df_post_reveal "$DF_PASS_REVEALED" "$DF_PASS_SYSTEMS"
+  # pass that revealed, hid or returned games or changed shortcuts in system
+  # folders, always with a timeout, and after the lock is released so a slow
+  # command never blocks Dripfeed itself.
+  df_pass_flush
   return "$rc"
 }
 
@@ -2177,9 +2218,11 @@ EOF_DUE
     df_showcase_prepare
   fi
   rm -f "$revlist" 2>/dev/null
+  # Counted for POST_REVEAL_CMD (run once the lock is released).
+  DF_PASS_REVEALED=$((DF_PASS_REVEALED + revealed))
+  for rsys in $systems; do df_pass_reveal_sys "$rsys"; done
   df_showcase_finalize
   df_gotm_update
-  DF_PASS_REVEALED="$revealed"; DF_PASS_SYSTEMS="$systems"
   if [ "$interactive" -eq 1 ]; then
     [ "$held_xdev" -gt 0 ] && df_announce "HELD: $held_xdev game(s) are on a different drive than the waiting library. See --diag."
     df_announce "All caught up. Enjoy!"
@@ -2224,6 +2267,9 @@ df_watch() {
     df_unlock
   fi
   sleep "${BOOT_DELAY:-30}"
+  # Games hidden above are refreshed together with the boot pass when it can run
+  # now; otherwise (clock not set yet, or no reveal at boot) right away.
+  if [ "${REVEAL_AT_BOOT:-1}" -ne 1 ] || [ ! -d "$GAMES_DIR" ] || ! df_clock_ok; then df_pass_flush; fi
   # Wait until games/ is mounted AND the clock is synced (RTC/network time) before the
   # boot update runs — revealing on a 1970 clock is what created a wrong-dated folder.
   # We wait INDEFINITELY (no try-cap): the moment a current network clock appears, the
@@ -2237,6 +2283,7 @@ df_watch() {
   [ "$waited" -gt 0 ] && df_log "watch: ready after ${waited}s — running boot update"
   local day rc=0
   if [ "${REVEAL_AT_BOOT:-1}" -eq 1 ]; then df_run_reveal --silent; rc=$?; fi
+  [ "$rc" -eq 2 ] && df_pass_flush     # the boot pass was skipped: refresh for the early hides
   # A pass skipped because another process held the lock is retried later.
   [ "$rc" -eq 2 ] || df_today_int > "$DF_LASTDAY"
   [ "${DAILY:-1}" -eq 1 ] || { df_log "watch done (daily off)"; return 0; }
@@ -2391,7 +2438,7 @@ df_undrip_entry() {        # $1 entry  $2 system folder (with trailing /)  $3 sy
   else
     df_rename "$entry" "$sysdir$clean"; rc=$?
     case "$rc" in
-      0) DF_UNDRIP_N=$((DF_UNDRIP_N+1)) ;;
+      0) DF_UNDRIP_N=$((DF_UNDRIP_N+1)); df_pass_returned "$qsys" ;;
       2) echo "  DIFFERENT DRIVE - left in the waiting library: $qsys/$clean"; DF_UNDRIP_HELD=$((DF_UNDRIP_HELD+1)) ;;
       *) echo "  could not restore (left where it is): $qsys/$clean"; DF_UNDRIP_HELD=$((DF_UNDRIP_HELD+1)) ;;
     esac
@@ -2462,6 +2509,10 @@ df_undrip() {
   [ "$DF_UNDRIP_HELD" -eq 0 ] || echo "  held $DF_UNDRIP_HELD item(s) safely (see above; $conflict_root holds quarantined copies)."
   # 2) Remove every menu folder Dripfeed created.
   df_undrip_folders
+  # A frontend's library needs one refresh for the games put back and the
+  # shortcut folders removed; this is the last run, so it happens here, before
+  # the state folder (and its log) goes.
+  df_pass_flush
   # 3) Remove the boot hook.
   "$DF_HELP/dripfeed-install.sh" --uninstall >/dev/null 2>&1
   # 4) Remove the visible Undrip launcher and all state + helper scripts. Only
@@ -2489,7 +2540,7 @@ case "${1:-}" in
                       df_lock_wait || { echo "$DF_BUSY_MSG"; exit 1; }
                       if [ "$1" = --tidy ]; then df_showcase_prepare; df_write_gamelist "$SHOWCASE_DIR"
                       else df_gotm_update; fi
-                      df_unlock ;;
+                      df_unlock; df_pass_flush ;;
   --undrip)           df_undrip ;;
   --diag)             df_diag ;;
   -h|--help)          echo "usage: dripfeed-engine.sh [--watch|--auto|--reveal|--pending|--migrate|--tidy|--undrip|--diag]" ;;
@@ -2536,8 +2587,9 @@ SYSTEM_SHORTCUTS=0   # opt-in: also put each What's New shortcut in games/<SYSTE
                      # for graphical frontends that build their own library from system
                      # folders (refresh that library to see them). 0 removes them again.
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"
-POST_REVEAL_CMD=""   # optional command run once after a pass that revealed games (120 s
-                     # timeout, never at shutdown), e.g. to ask a frontend to refresh its library
+POST_REVEAL_CMD=""   # optional command run once after a run that revealed, hid or put back
+                     # games (120 s timeout, never at shutdown), e.g. to ask a frontend to
+                     # refresh its library
 TOUCH_ON_REVEAL=1    # 1 = a revealed game's file date becomes the reveal time
 GOTM=1               # build the Game of the Month menu folder (from gotm.tsv)
 GOTM_DIRNAME="_Game of the Month"  # "_@..." pins it to the top of the menu
@@ -2700,7 +2752,8 @@ df_add() {
     fi
     df_rename "$f" "$stage/${d}_${base}"; rc=$?
     case "$rc" in
-      0) echo "  scheduled $d  [$sys]  $base"; n=$((n+1)); queued[$((i-1))]=1 ;;
+      0) echo "  scheduled $d  [$sys]  $base"; n=$((n+1)); queued[$((i-1))]=1
+         case "$f" in "$STAGING_ROOT"/*) ;; *) df_pass_hidden "$sys" ;; esac ;;   # re-dating moves nothing in sight
       2) echo "  HELD (on a different drive than the waiting library; Dripfeed never copies games): $f" ;;
       *) echo "  FAILED: $f" ;;
     esac
@@ -2708,6 +2761,7 @@ df_add() {
   rm -f "$idx" "$req" "$ann" 2>/dev/null
   df_unlock
   echo "Done — $n item(s) queued."
+  df_pass_flush                        # POST_REVEAL_CMD: once for the games just hidden
 }
 
 # One line per queue entry, sorted by date (then system and name) across BOTH
@@ -2782,7 +2836,7 @@ df_remove() {
     echo "Held: $sys/$clean is on a different drive than games/$sys (Dripfeed never copies games)."; return 1
   fi
   if df_support_entry "$dest"; then
-    [ "$rc" -eq 0 ] && { echo "Restored firmware/support entry (not a game): $sys/$clean"; return 0; }
+    [ "$rc" -eq 0 ] && { echo "Restored firmware/support entry (not a game): $sys/$clean"; df_pass_returned "$sys"; df_pass_flush; return 0; }
     echo "Failed to restore firmware/support entry: $sys/$clean"; return 1
   fi
   [ "$rc" -eq 0 ] || { echo "Failed to reveal: $sys/$clean (nothing changed)"; return 1; }
@@ -2790,6 +2844,7 @@ df_remove() {
   df_ledger_record "$today" "$sys" "$clean"
   df_touch_revealed "$dest"
   echo "Revealed now: $sys/$clean"
+  df_pass_revealed "$sys"; df_pass_flush   # POST_REVEAL_CMD: the game is in sight again
 }
 
 # Guided numbered menu (no dialog dependency, works over SSH).

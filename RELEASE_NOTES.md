@@ -50,7 +50,8 @@ system folders. Full details are in
   own library from system folders, plus three standard-file options:
   `SYSTEM_SHORTCUTS` (opt-in per-system `_Dripfeed New` shortcut folders, plus
   the GOT'eM pick in `games/<SYSTEM>/_Game of the Month/`),
-  `POST_REVEAL_CMD` (run a refresh command you supply after a reveal), and
+  `POST_REVEAL_CMD` (run a refresh command you supply after games are revealed,
+  hidden or put back), and
   `TOUCH_ON_REVEAL` (a revealed file's date shows its reveal time). Dripfeed
   still never writes to a frontend's database, settings, or binaries.
 - **Calendar export fixed.** Stable event IDs, `SEQUENCE`, correct escaping and

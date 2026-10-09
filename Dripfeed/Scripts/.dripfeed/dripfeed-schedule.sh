@@ -87,7 +87,8 @@ df_add() {
     fi
     df_rename "$f" "$stage/${d}_${base}"; rc=$?
     case "$rc" in
-      0) echo "  scheduled $d  [$sys]  $base"; n=$((n+1)); queued[$((i-1))]=1 ;;
+      0) echo "  scheduled $d  [$sys]  $base"; n=$((n+1)); queued[$((i-1))]=1
+         case "$f" in "$STAGING_ROOT"/*) ;; *) df_pass_hidden "$sys" ;; esac ;;   # re-dating moves nothing in sight
       2) echo "  HELD (on a different drive than the waiting library; Dripfeed never copies games): $f" ;;
       *) echo "  FAILED: $f" ;;
     esac
@@ -95,6 +96,7 @@ df_add() {
   rm -f "$idx" "$req" "$ann" 2>/dev/null
   df_unlock
   echo "Done — $n item(s) queued."
+  df_pass_flush                        # POST_REVEAL_CMD: once for the games just hidden
 }
 
 # One line per queue entry, sorted by date (then system and name) across BOTH
@@ -169,7 +171,7 @@ df_remove() {
     echo "Held: $sys/$clean is on a different drive than games/$sys (Dripfeed never copies games)."; return 1
   fi
   if df_support_entry "$dest"; then
-    [ "$rc" -eq 0 ] && { echo "Restored firmware/support entry (not a game): $sys/$clean"; return 0; }
+    [ "$rc" -eq 0 ] && { echo "Restored firmware/support entry (not a game): $sys/$clean"; df_pass_returned "$sys"; df_pass_flush; return 0; }
     echo "Failed to restore firmware/support entry: $sys/$clean"; return 1
   fi
   [ "$rc" -eq 0 ] || { echo "Failed to reveal: $sys/$clean (nothing changed)"; return 1; }
@@ -177,6 +179,7 @@ df_remove() {
   df_ledger_record "$today" "$sys" "$clean"
   df_touch_revealed "$dest"
   echo "Revealed now: $sys/$clean"
+  df_pass_revealed "$sys"; df_pass_flush   # POST_REVEAL_CMD: the game is in sight again
 }
 
 # Guided numbered menu (no dialog dependency, works over SSH).
