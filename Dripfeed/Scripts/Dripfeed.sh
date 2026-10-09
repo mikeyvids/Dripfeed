@@ -704,18 +704,27 @@ df_is_shortcut_dir() {
   return "$rc"
 }
 # GOT'eM folders Dripfeed may write inside system folders (SYSTEM_SHORTCUTS=1): the
-# configured and default folder names, with or without a " - Mon" suffix.
+# configured and default folder names, with or without a " - Mon" suffix (or the
+# bare " -" left when SHOWCASE_MAXLEN cuts the month off), this month's labels, and
+# every folder that still holds a recorded shortcut (an old name stays guarded
+# until its shortcuts are removed).
 DF_GOTM_DIRS=()   # filled once per process (callers loop over every game; no fork per call)
 df_is_gotm_dir() {
-  local n="${1##*/}" b rc=1 nc=0
+  local n="${1##*/}" b f rc=1 nc=0
   [ -n "$n" ] || return 1
   if [ "${#DF_GOTM_DIRS[@]}" -eq 0 ]; then
     DF_GOTM_DIRS=("$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")" "$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")" "_Game of the Month" "_Discord GOTM")
+    DF_GOTM_DIRS+=("$(df_gotm_label "${DF_GOTM_DIRS[0]}")" "$(df_gotm_label "${DF_GOTM_DIRS[1]}")")
+    if [ -f "$DF_GOTM_MIRRORS" ]; then
+      while IFS=$'\t' read -r b f || [ -n "$b" ]; do
+        f="${f%/*}"; [ -n "$f" ] && DF_GOTM_DIRS+=("${f##*/}")
+      done < "$DF_GOTM_MIRRORS"
+    fi
   fi
   shopt -q nocasematch && nc=1
   shopt -s nocasematch
   for b in "${DF_GOTM_DIRS[@]}"; do
-    if [ -n "$b" ] && { [[ "$n" == "$b" ]] || [[ "$n" == "$b - "* ]]; }; then rc=0; break; fi
+    if [ -n "$b" ] && { [[ "$n" == "$b" ]] || [[ "$n" == "$b - "* ]] || [[ "$n" == "$b -" ]]; }; then rc=0; break; fi
   done
   [ "$nc" -eq 1 ] || shopt -u nocasematch
   return "$rc"
@@ -1246,7 +1255,7 @@ df_showcase_kind() {   # sets DF_SHOWCASE_KIND for a folder NAME: record|legacy|
   [ -n "$DF_GOTM_BASE1" ] || DF_GOTM_BASE1="$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")"
   [ -n "$DF_GOTM_BASE2" ] || DF_GOTM_BASE2="$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")"
   for g in "$DF_GOTM_BASE1" "$DF_GOTM_BASE2" "_Game of the Month" "_Discord GOTM"; do
-    case "$n" in "$g"|"$g - "*) return 1 ;; esac
+    case "$n" in "$g"|"$g - "*|"$g -") return 1 ;; esac
   done
   if [ -f "$DF_SHOWNAMES" ]; then
     while IFS= read -r line || [ -n "$line" ]; do [ "$line" = "$n" ] && { DF_SHOWCASE_KIND=record; return 0; }; done < "$DF_SHOWNAMES"
@@ -1436,6 +1445,21 @@ df_gotm_mirror_clear() {   # $1 = GOT'eM folder base to clear; empty = every one
   if [ -n "$keep" ]; then printf '%s' "$keep" > "$DF_GOTM_MIRRORS"; else rm -f "$DF_GOTM_MIRRORS"; fi
   return 0
 }
+df_gotm_mirror_prune() {   # keep the shortcuts of the folder bases given; clear the rest (none given = all)
+  [ -f "$DF_GOTM_MIRRORS" ] || return 0
+  local base f k stale=""
+  while IFS=$'\t' read -r base f || [ -n "$base" ]; do
+    [ -n "$base" ] || continue
+    for k in "$@"; do [ "$base" = "$k" ] && continue 2; done
+    case $'\n'"$stale" in *$'\n'"$base"$'\n'*) ;; *) stale="$stale$base"$'\n' ;; esac
+  done < "$DF_GOTM_MIRRORS"
+  while IFS= read -r base; do
+    [ -n "$base" ] && df_gotm_mirror_clear "$base"
+  done <<EOF_GOTM_STALE
+$stale
+EOF_GOTM_STALE
+  return 0
+}
 df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (relative to /media/fat)  $4 = custom label
   [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] || return 0
   local base="$1" label="$2" want="$3" custom="${4:-}" item rel sys dir title out made=0
@@ -1467,9 +1491,13 @@ df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (rel
 }
 df_gotm_mirror_ensure() {  # same arguments; adds the shortcut only if this folder has none yet
   [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] && [ -n "${3:-}" ] || return 0
-  local b f
+  local b f d
   if [ -f "$DF_GOTM_MIRRORS" ]; then
-    while IFS=$'\t' read -r b f || [ -n "$b" ]; do [ "$b" = "$1" ] && [ -f "$f" ] && return 0; done < "$DF_GOTM_MIRRORS"
+    while IFS=$'\t' read -r b f || [ -n "$b" ]; do
+      [ "$b" = "$1" ] && [ -f "$f" ] || continue
+      d="${f%/*}"; [ "${d##*/}" = "$2" ] && return 0
+      df_gotm_mirror_clear "$1"; break      # folder label changed (GOTM_MONTH): move it
+    done < "$DF_GOTM_MIRRORS"
   fi
   df_gotm_mirror_add "$@"
 }
@@ -1977,33 +2005,53 @@ df_gotm_build() {
   return 0
 }
 
+# A GOT'eM folder renamed in config.ini: remove the folders built under the old
+# name (only Dripfeed-made ones) and forget them. $1/$2 = the current folder bases.
+df_gotm_clear_renamed() {
+  [ -f "$DF_GOTM_NAMES" ] || return 0
+  local n keep=""
+  while IFS= read -r n || [ -n "$n" ]; do
+    [ -n "$n" ] || continue
+    case "$n" in
+      "$1"|"$1 - "*|"$1 -"|"$2"|"$2 - "*|"$2 -"|*/*) keep="$keep$n"$'\n'; continue ;;
+      _*) ;;
+      *) keep="$keep$n"$'\n'; continue ;;
+    esac
+    [ -e "$DF_ROOT/$n" ] && { df_gotm_clear "$DF_ROOT/$n" || keep="$keep$n"$'\n'; }
+  done < "$DF_GOTM_NAMES"
+  if [ -n "$keep" ]; then printf '%s' "$keep" > "$DF_GOTM_NAMES"; else rm -f "$DF_GOTM_NAMES"; fi
+}
+
 df_gotm_update() {
   [ "${GOTM:-1}" -eq 1 ] || return 0
   { [ -f "$DF_GOTM" ] || [ -n "${GOTM_SOURCE:-}" ]; } || return 0
+  local gb sb
+  gb="$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")"
+  sb="$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")"
+  # System-folder shortcuts follow the GOT'eM folders: a renamed folder's go first.
+  df_gotm_mirror_prune "$gb" "$sb"
   df_clock_ok || return 0                       # never act on an unsynced clock
-  local month cur u s upick ulabel spick slabel TAB ok=0
+  local month cur u s upick ulabel spick slabel TAB ok=0 key
   TAB="$(printf '\t')"
   month=$(date +%Y-%m)
   u="$(df_gotm_user_pick "$month")"; upick="${u%%$TAB*}"; ulabel="${u#*$TAB}"; [ "$ulabel" = "$u" ] && ulabel=""
   s="$(df_gotm_src_pick "$month")";  spick="${s%%$TAB*}"; slabel="${s#*$TAB}"; [ "$slabel" = "$s" ] && slabel=""
+  # The folder names are part of what is built: renaming one rebuilds it now.
+  key="$month|$upick|$spick|$gb|$sb|${GOTM_MONTH:-0}"
   cur=$(cat "$DF_GOTM_LAST" 2>/dev/null)
-  if [ "$cur" = "$month|$upick|$spick" ]; then
+  if [ "$cur" = "$key" ]; then
     # Unchanged picks: only add system-folder shortcuts that are missing (for
     # example right after SYSTEM_SHORTCUTS was switched on).
-    local gb sb
-    gb="$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")"
     df_gotm_mirror_ensure "$gb" "$(df_gotm_label "$gb")" "$upick" "$ulabel"
-    if [ -n "${GOTM_SOURCE:-}" ]; then
-      sb="$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")"
-      df_gotm_mirror_ensure "$sb" "$(df_gotm_label "$sb")" "$spick" "$slabel"
-    fi
+    [ -n "${GOTM_SOURCE:-}" ] && df_gotm_mirror_ensure "$sb" "$(df_gotm_label "$sb")" "$spick" "$slabel"
     return 0
   fi
+  df_gotm_clear_renamed "$gb" "$sb"
   df_gotm_build "${GOTM_DIRNAME:-_Game of the Month}" "$upick" "$ulabel" || ok=1
   if [ -n "${GOTM_SOURCE:-}" ]; then
     df_gotm_build "${GOTM_SRC_DIRNAME:-_Discord GOTM}" "$spick" "$slabel" || ok=1
   fi
-  [ "$ok" -eq 0 ] && printf '%s' "$month|$upick|$spick" > "$DF_GOTM_LAST"   # else retry next pass
+  [ "$ok" -eq 0 ] && printf '%s' "$key" > "$DF_GOTM_LAST"   # else retry next pass
 }
 
 # Keep only the newest SHOWCASE_KEEP shortcuts, refresh gamelist.xml, then the

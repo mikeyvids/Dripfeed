@@ -622,6 +622,27 @@ chk "switching it on again restores them on the next pass" '[ -f "$CG/games/NES/
 eng "$CG" --undrip >/dev/null 2>&1
 chk "Undrip removes GOT'eM system shortcuts and leaves games and the user's file" '[ ! -e "$CG/games/NES/$G" ] && [ ! -e "$CG/games/SNES/_Discord GOTM" ] && [ "$(cat "$CG/games/SNES/$G/Keep Me.mgl")" = mine ] && [ -f "$CG/games/NES/Pick Two.nes" ] && [ -f "$CG/games/SNES/Pick One.sfc" ]'
 
+echo "== GOT'eM folder renames, month tags and switches keep both folders in step =="
+newcard CR; mkdir -p "$CR/games/NES"; RC="$CR/Scripts/.dripfeed/config.ini"; RREC="$CR/Scripts/.dripfeed/gotm_system_shortcuts"
+echo q > "$CR/games/NES/Pick Two.nes"; printf '%s\tgames/NES/Pick Two.nes\n' "$MONTH_NOW" > "$CR/Scripts/.dripfeed/gotm.tsv"
+printf 'SYSTEM_SHORTCUTS=1\nGOTM_DIRNAME="_Old Picks"\n' >> "$RC"
+eng "$CR" --gotm >/dev/null 2>&1
+sed_in_place 's/^GOTM_DIRNAME="_Old Picks"$/GOTM_DIRNAME="_New Picks"/' "$RC"
+ROUT="$(sch "$CR" add NES 2099-01-01 "$CR/games/NES/_Old Picks" 2>&1)"
+chk "right after a rename the old system folder is still never scheduled" '[ -f "$CR/games/NES/_Old Picks/Pick Two.mgl" ] && printf "%s\n" "$ROUT" | grep -q "shortcut folder" && [ ! -e "$CR/.dripfeed-library/NES/2099-01-01__Old Picks" ]'
+eng "$CR" --gotm >/dev/null 2>&1
+chk "renaming the GOT'eM folder moves the menu folder and its system shortcut together" '[ ! -e "$CR/_Old Picks" ] && [ ! -e "$CR/games/NES/_Old Picks" ] && [ -f "$CR/_New Picks/NES - Pick Two.mgl" ] && [ -f "$CR/games/NES/_New Picks/Pick Two.mgl" ] && ! grep -q "_Old Picks" "$RREC"'
+printf 'GOTM_MONTH=1\nSHOWCASE_MAXLEN=12\n' >> "$RC"
+eng "$CR" --gotm >/dev/null 2>&1
+chk "a month tag cut short by SHOWCASE_MAXLEN (\"<name> -\") is built in step and still guarded" '[ -f "$CR/_New Picks -/NES - Pick Two.mgl" ] && [ -f "$CR/games/NES/_New Picks -/Pick Two.mgl" ] && [ ! -e "$CR/games/NES/_New Picks" ] && lib "$CR" "df_is_gotm_dir \"_New Picks -\""'
+sed_in_place '/^SHOWCASE_MAXLEN=12$/d' "$RC"; printf 'GOTM=0\n' >> "$RC"
+eng "$CR" --gotm >/dev/null 2>&1
+chk "GOTM=0 leaves the GOT'eM menu folder and its system shortcut as they were (it stops building)" '[ -f "$CR/_New Picks -/NES - Pick Two.mgl" ] && [ -f "$CR/games/NES/_New Picks -/Pick Two.mgl" ]'
+sed_in_place '/^GOTM=0$/d' "$RC"; printf 'GOTM_DIRNAME="_Picks #1"   # a quoted # is part of the name\n' >> "$RC"
+eng "$CR" --gotm >/dev/null 2>&1
+ROUT="$(sch "$CR" add NES 2099-01-01 "$CR/games/NES/_Picks #1 - $(date +%b)" 2>&1)"
+chk "a GOT'eM name with # is built and guarded under its full name" '[ -f "$CR/games/NES/_Picks #1 - $(date +%b)/Pick Two.mgl" ] && [ -z "$(ls -d "$CR"/games/NES/_New* 2>/dev/null)" ] && [ -z "$(ls -d "$CR"/_New* 2>/dev/null)" ] && printf "%s\n" "$ROUT" | grep -q "shortcut folder"'
+
 echo "== POST_REVEAL_CMD: once per pass that revealed games, with a timeout =="
 newcard CQ; mkdir -p "$CQ/games/SNES" "$CQ/games/NES"
 printf "POST_REVEAL_CMD = 'echo \"#\$DRIPFEED_REVEALED_COUNT \$DRIPFEED_REVEALED_SYSTEMS\" >> \"%s/post.out\"'\n" "$CQ" >> "$CQ/Scripts/.dripfeed/config.ini"

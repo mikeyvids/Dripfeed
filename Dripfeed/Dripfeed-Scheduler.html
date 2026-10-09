@@ -659,9 +659,17 @@ function isPlayableFile(name){
 let SYS_SHORTCUTS_DIR="_Dripfeed New";
 // GOT'eM folders the engine may write inside system folders (SYSTEM_SHORTCUTS=1):
 // configured and default names, with or without a " - Mon" suffix (df_is_gotm_dir).
-let GOTM_DIR_NAMES=["_Game of the Month","_Discord GOTM"];
-function isShortcutDir(name){const n=String(name||"").toLowerCase();return n==="_dripfeed new"||n===SYS_SHORTCUTS_DIR.toLowerCase()||GOTM_DIR_NAMES.some(b=>{const g=b.toLowerCase();return n===g||n.startsWith(g+" - ");});}
+let GOTM_DIR_NAMES=["_Game of the Month","_Discord GOTM"], GOTM_MAXLEN=30;
+function isShortcutDir(name){const n=String(name||"").toLowerCase();return n==="_dripfeed new"||n===SYS_SHORTCUTS_DIR.toLowerCase()||GOTM_DIR_NAMES.some(b=>{const g=b.toLowerCase();return n===g||n===g+" -"||n.startsWith(g+" - ");});}
 // The engine's df_showcase_sanitize: drop unsafe characters, collapse spaces, lead with "_".
+// One config.ini value, read the way the engine reads it: a quoted value runs to its
+// closing quote ("#" inside is part of the name); an unquoted one stops at "#".
+function iniValue(t,k){const m=String(t||"").match(new RegExp("^"+k+"\\s*=\\s*(.*)$","m"));if(!m)return null;
+  let v=m[1].trim();const q=v[0];
+  if(q==='"'||q==="'"){v=v.slice(1);const e=v.indexOf(q);return e<0?v:v.slice(0,e);}
+  return v.replace(/#.*$/,"").trim();}
+// GOT'eM folder names that still hold Dripfeed's system-folder shortcuts (the engine's record).
+function gotmRecordedDirs(t){return String(t||"").split("\n").map(l=>{const p=(l.split("\t")[1]||"").trim().split("/");return p.length>1?p[p.length-2]:"";}).filter(Boolean);}
 function gotmFolderName(v,max=30){let n=String(v||"").replace(/[<>:"\/\\|?*]/g,"").replace(/[^\t\x20-\x7e]/g,"").replace(/ +/g," ").trim();if(!n.startsWith("_"))n="_"+n;if(n.length>max)n=n.slice(0,max).trimEnd();return n==="_"?"":n;}
 function isSystemFile(name,kind){
   const n=name.toLowerCase();
@@ -1492,8 +1500,7 @@ $("#cfgShowDate").onchange=cfgUpdateLimits;
 $("#cfgGotmMonth").onchange=cfgUpdateLimits;
 async function cfgLoad(){
   const t=await readConfigIni();
-  const get=k=>{const m=t.match(new RegExp("^"+k+"\\s*=\\s*(.*)$","m"));if(!m)return null;
-    let v=m[1].replace(/#.*$/,"").trim();return v.replace(/^["']|["']$/g,"");};
+  const get=k=>iniValue(t,k);
   const configuredStage=get("STAGING_ROOT");
   if(configuredStage){
     const name=configuredStage.split("/").filter(Boolean).pop();
@@ -1513,7 +1520,9 @@ async function cfgLoad(){
   const scDir=(get("SYSTEM_SHORTCUTS_DIR")||"").replace(/[<>:"\/\\|?*]/g,"").trim();
   SYS_SHORTCUTS_DIR=scDir&&!scDir.startsWith(".")?scDir:"_Dripfeed New";
   const maxLen=Math.max(8,parseInt(get("SHOWCASE_MAXLEN")??"30",10)||30);
-  GOTM_DIR_NAMES=["_Game of the Month","_Discord GOTM",...[get("GOTM_DIRNAME"),get("GOTM_SRC_DIRNAME")].filter(Boolean).map(v=>gotmFolderName(v,maxLen)).filter(Boolean)];
+  GOTM_DIR_NAMES=["_Game of the Month","_Discord GOTM",...[get("GOTM_DIRNAME"),get("GOTM_SRC_DIRNAME")].filter(Boolean).map(v=>gotmFolderName(v,maxLen)).filter(Boolean),
+    ...gotmRecordedDirs(await readStateText("gotm_system_shortcuts"))];
+  GOTM_MAXLEN=maxLen;
   cfgUpdateLimits();
 }
 $("#cfgApply").onclick=async()=>{
@@ -1534,6 +1543,9 @@ $("#cfgApply").onclick=async()=>{
       SYSTEM_SHORTCUTS:$("#cfgSysShortcuts").checked?"1":"0"});
   }catch(e){console.error(e);toast("config.ini was not changed: "+(e&&e.message||e&&e.name||"error"),true);return;}
   $("#cfgPrefix").value=prefix;$("#cfgGotm").value=gotm;
+  // Guard the new name now; the old one stays guarded until the card's next pass removes it.
+  const named=gotmFolderName(gotm,GOTM_MAXLEN);
+  if(named&&!GOTM_DIR_NAMES.includes(named))GOTM_DIR_NAMES=[...GOTM_DIR_NAMES,named];
   cfgUpdateLimits();
   toast("Folder settings saved to config.ini.");
 };

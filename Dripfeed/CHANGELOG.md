@@ -15,7 +15,15 @@
   replaced. Arcade picks have no system folder under `games/` and stay in the
   top-level GOT'eM folder only.
 - These GOT'eM folders inside system folders are never scheduled or listed as
-  games, by the CLI, browser requests or the browser scheduler.
+  games, by the CLI, browser requests or the browser scheduler — including a
+  month tag cut short by `SHOWCASE_MAXLEN`, a name containing `#`, and an old
+  name until its shortcuts are removed.
+- **Renaming a GOT'eM folder takes effect on the next pass.** Changing
+  `GOTM_DIRNAME`/`GOTM_SRC_DIRNAME` or `GOTM_MONTH` now rebuilds the GOT'eM menu
+  folder under the new name right away (before, the old name stayed until the
+  next month) and moves its system-folder shortcuts with it; folders built under
+  the old name are removed if they hold only Dripfeed's shortcuts. `GOTM=0`
+  still just stops building: what is there stays as it was.
 - 1.4.0 was a test build that was never published; this entry and 1.4.0's below
   together describe the changes since 1.3.2.
 

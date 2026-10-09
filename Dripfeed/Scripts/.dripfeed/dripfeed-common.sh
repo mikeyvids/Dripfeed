@@ -662,18 +662,27 @@ df_is_shortcut_dir() {
   return "$rc"
 }
 # GOT'eM folders Dripfeed may write inside system folders (SYSTEM_SHORTCUTS=1): the
-# configured and default folder names, with or without a " - Mon" suffix.
+# configured and default folder names, with or without a " - Mon" suffix (or the
+# bare " -" left when SHOWCASE_MAXLEN cuts the month off), this month's labels, and
+# every folder that still holds a recorded shortcut (an old name stays guarded
+# until its shortcuts are removed).
 DF_GOTM_DIRS=()   # filled once per process (callers loop over every game; no fork per call)
 df_is_gotm_dir() {
-  local n="${1##*/}" b rc=1 nc=0
+  local n="${1##*/}" b f rc=1 nc=0
   [ -n "$n" ] || return 1
   if [ "${#DF_GOTM_DIRS[@]}" -eq 0 ]; then
     DF_GOTM_DIRS=("$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")" "$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")" "_Game of the Month" "_Discord GOTM")
+    DF_GOTM_DIRS+=("$(df_gotm_label "${DF_GOTM_DIRS[0]}")" "$(df_gotm_label "${DF_GOTM_DIRS[1]}")")
+    if [ -f "$DF_GOTM_MIRRORS" ]; then
+      while IFS=$'\t' read -r b f || [ -n "$b" ]; do
+        f="${f%/*}"; [ -n "$f" ] && DF_GOTM_DIRS+=("${f##*/}")
+      done < "$DF_GOTM_MIRRORS"
+    fi
   fi
   shopt -q nocasematch && nc=1
   shopt -s nocasematch
   for b in "${DF_GOTM_DIRS[@]}"; do
-    if [ -n "$b" ] && { [[ "$n" == "$b" ]] || [[ "$n" == "$b - "* ]]; }; then rc=0; break; fi
+    if [ -n "$b" ] && { [[ "$n" == "$b" ]] || [[ "$n" == "$b - "* ]] || [[ "$n" == "$b -" ]]; }; then rc=0; break; fi
   done
   [ "$nc" -eq 1 ] || shopt -u nocasematch
   return "$rc"
@@ -1204,7 +1213,7 @@ df_showcase_kind() {   # sets DF_SHOWCASE_KIND for a folder NAME: record|legacy|
   [ -n "$DF_GOTM_BASE1" ] || DF_GOTM_BASE1="$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")"
   [ -n "$DF_GOTM_BASE2" ] || DF_GOTM_BASE2="$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")"
   for g in "$DF_GOTM_BASE1" "$DF_GOTM_BASE2" "_Game of the Month" "_Discord GOTM"; do
-    case "$n" in "$g"|"$g - "*) return 1 ;; esac
+    case "$n" in "$g"|"$g - "*|"$g -") return 1 ;; esac
   done
   if [ -f "$DF_SHOWNAMES" ]; then
     while IFS= read -r line || [ -n "$line" ]; do [ "$line" = "$n" ] && { DF_SHOWCASE_KIND=record; return 0; }; done < "$DF_SHOWNAMES"
@@ -1394,6 +1403,21 @@ df_gotm_mirror_clear() {   # $1 = GOT'eM folder base to clear; empty = every one
   if [ -n "$keep" ]; then printf '%s' "$keep" > "$DF_GOTM_MIRRORS"; else rm -f "$DF_GOTM_MIRRORS"; fi
   return 0
 }
+df_gotm_mirror_prune() {   # keep the shortcuts of the folder bases given; clear the rest (none given = all)
+  [ -f "$DF_GOTM_MIRRORS" ] || return 0
+  local base f k stale=""
+  while IFS=$'\t' read -r base f || [ -n "$base" ]; do
+    [ -n "$base" ] || continue
+    for k in "$@"; do [ "$base" = "$k" ] && continue 2; done
+    case $'\n'"$stale" in *$'\n'"$base"$'\n'*) ;; *) stale="$stale$base"$'\n' ;; esac
+  done < "$DF_GOTM_MIRRORS"
+  while IFS= read -r base; do
+    [ -n "$base" ] && df_gotm_mirror_clear "$base"
+  done <<EOF_GOTM_STALE
+$stale
+EOF_GOTM_STALE
+  return 0
+}
 df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (relative to /media/fat)  $4 = custom label
   [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] || return 0
   local base="$1" label="$2" want="$3" custom="${4:-}" item rel sys dir title out made=0
@@ -1425,9 +1449,13 @@ df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (rel
 }
 df_gotm_mirror_ensure() {  # same arguments; adds the shortcut only if this folder has none yet
   [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] && [ -n "${3:-}" ] || return 0
-  local b f
+  local b f d
   if [ -f "$DF_GOTM_MIRRORS" ]; then
-    while IFS=$'\t' read -r b f || [ -n "$b" ]; do [ "$b" = "$1" ] && [ -f "$f" ] && return 0; done < "$DF_GOTM_MIRRORS"
+    while IFS=$'\t' read -r b f || [ -n "$b" ]; do
+      [ "$b" = "$1" ] && [ -f "$f" ] || continue
+      d="${f%/*}"; [ "${d##*/}" = "$2" ] && return 0
+      df_gotm_mirror_clear "$1"; break      # folder label changed (GOTM_MONTH): move it
+    done < "$DF_GOTM_MIRRORS"
   fi
   df_gotm_mirror_add "$@"
 }

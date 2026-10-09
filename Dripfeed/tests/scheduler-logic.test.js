@@ -105,7 +105,7 @@ function loadIcsSection() {
 function loadGuards() {
   const ctx = { Promise, Set };
   vm.runInNewContext(`${slice("let showSysFiles=false;", "// Scan one system into a NEW array")}
-    this.api={isPlayableFile,isSystemFile,inspectFolder,classifyEntry,INSPECT_BUDGET,setShortcutDir:v=>{SYS_SHORTCUTS_DIR=v;},setGotmDirs:v=>{GOTM_DIR_NAMES=v;},gotmFolderName};`, ctx, { filename: "Dripfeed-Scheduler.guards.js" });
+    this.api={isPlayableFile,isSystemFile,inspectFolder,classifyEntry,INSPECT_BUDGET,setShortcutDir:v=>{SYS_SHORTCUTS_DIR=v;},setGotmDirs:v=>{GOTM_DIR_NAMES=v;},gotmFolderName,iniValue,gotmRecordedDirs};`, ctx, { filename: "Dripfeed-Scheduler.guards.js" });
   return ctx.api;
 }
 const ledgerText = (dir, name) => dir.files.has(name) ? dir.files.get(name) : null;
@@ -483,6 +483,26 @@ test("folder inspection: GOT'eM folders inside system folders are never games", 
   g.setGotmDirs(["_Game of the Month", "_Discord GOTM", g.gotmFolderName("Family Picks")]);
   assert.strictEqual(g.isSystemFile("_Family Picks", "directory"), true, "a configured name is sanitized like the engine's");
   assert.strictEqual(g.gotmFolderName('Bad:<Name>?  Here'), "_BadName Here");
+  // SHOWCASE_MAXLEN can cut a month label down to "<name> -".
+  assert.strictEqual(g.isSystemFile(g.gotmFolderName("_Game of the Month - Oct", 20), "directory"), true, "month label cut to the dash");
+  // A renamed folder that still holds recorded shortcuts stays guarded.
+  const rec = "_Old Picks\t/media/fat/games/SNES/_Old Picks/Plok.mgl\r\n_Game of the Month\t/media/fat/games/NES/_Game of the Month - Oct/Pick.mgl\n";
+  assert.deepStrictEqual([...g.gotmRecordedDirs(rec)], ["_Old Picks", "_Game of the Month - Oct"]);
+  g.setGotmDirs(["_Game of the Month", "_Discord GOTM", ...g.gotmRecordedDirs(rec)]);
+  assert.strictEqual(g.isSystemFile("_Old Picks", "directory"), true);
+});
+
+test("config.ini values are read the way the engine reads them", () => {
+  const g = loadGuards();
+  const ini = 'GOTM_DIRNAME="_Picks #1"   # quoted: the # is part of the name\nGOTM_SRC_DIRNAME=_Club   # comment\nSHOWCASE_PREFIX=\'_New - \'\nGOTM=0\n';
+  assert.strictEqual(g.iniValue(ini, "GOTM_DIRNAME"), "_Picks #1");
+  assert.strictEqual(g.iniValue(ini, "GOTM_SRC_DIRNAME"), "_Club");
+  assert.strictEqual(g.iniValue(ini, "SHOWCASE_PREFIX"), "_New - ");
+  assert.strictEqual(g.iniValue(ini, "GOTM"), "0");
+  assert.strictEqual(g.iniValue(ini, "GOTM_MONTH"), null);
+  assert.strictEqual(g.iniValue('GOTM_DIRNAME="_Open quote\r\n', "GOTM_DIRNAME"), "_Open quote");
+  g.setGotmDirs(["_Game of the Month", "_Discord GOTM", g.gotmFolderName(g.iniValue(ini, "GOTM_DIRNAME"))]);
+  assert.strictEqual(g.isSystemFile("_Picks #1 - Oct", "directory"), true);
 });
 
 test("folder inspection stops at the first playable image and caps deep data trees", async () => {

@@ -57,6 +57,9 @@ verified, complete these checks on a backed-up or disposable card.
   `games/<SYSTEM>/_Game of the Month/` shows it and the shortcut launches. Change
   the pick and confirm the old shortcut is gone; set the option to `0` and confirm
   the folder is removed on the next run.
+- Rename the GOT'eM folder in the Scheduler's folder settings, run Scripts →
+  Dripfeed again, and confirm the menu folder and the system-folder shortcut both
+  move to the new name with nothing left under the old one.
 - Interrupt power once only on a disposable card, then confirm the next boot logs
   `RECOVERED reveal after interruption` and creates no duplicate.
 
