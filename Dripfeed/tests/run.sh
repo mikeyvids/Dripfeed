@@ -20,11 +20,29 @@ sed_in_place(){
   sed -i "$expr" "$file"                              # GNU
 }
 
-ROOT="$(mktemp -d)"; trap 'rm -rf "$ROOT"' EXIT
+ROOT="$(mktemp -d)"; CARDS=""; KILLS=""
+trap 'for p in $KILLS; do kill "$p" 2>/dev/null; done; rm -rf "$ROOT" $CARDS' EXIT
 mkdir -p "$ROOT/Scripts/.dripfeed" "$ROOT/games/GENESIS" "$ROOT/games/Saturn" "$ROOT/linux"
 cp "$SRC"/*.sh "$ROOT/Scripts/.dripfeed/"
 printf '#!/bin/sh\n' > "$ROOT/linux/_user-startup.sh"
-export DRIPFEED_ROOT="$ROOT" DRIPFEED_INTERACTIVE=0
+export DRIPFEED_ROOT="$ROOT" DRIPFEED_INTERACTIVE=0 DRIPFEED_LOCK_WAIT=1
+TODAY="$(date +%Y-%m-%d)"; MONTH_NOW="$(date +%Y-%m)"
+# Helpers for the isolated fake cards used by the later sections.
+scratch(){ local d; d="$(mktemp -d)"; CARDS="$CARDS $d"; eval "$1=\$d"; }
+newcard(){   # $1 = variable that receives a fresh, installed fake card root
+  local r; scratch r
+  mkdir -p "$r/Scripts/.dripfeed" "$r/linux" "$r/games"
+  cp "$SRC"/*.sh "$r/Scripts/.dripfeed/"
+  printf '#!/bin/sh\n' > "$r/linux/_user-startup.sh"
+  DRIPFEED_ROOT="$r" bash "$r/Scripts/.dripfeed/dripfeed-install.sh" >/dev/null 2>&1
+  eval "$1=\$r"
+}
+eng(){ local c="$1"; shift; DRIPFEED_ROOT="$c" bash "$c/Scripts/.dripfeed/dripfeed-engine.sh" "$@"; }
+sch(){ local c="$1"; shift; DRIPFEED_ROOT="$c" bash "$c/Scripts/.dripfeed/dripfeed-schedule.sh" "$@"; }
+lib(){ DRIPFEED_ROOT="$1" bash -c '. "$DRIPFEED_ROOT/Scripts/.dripfeed/dripfeed-common.sh"; df_load_config; '"$2"; }
+mksparse(){ truncate -s "$2" "$1" 2>/dev/null || dd if=/dev/zero of="$1" bs=1 count=0 seek="$2" 2>/dev/null; }
+inode(){ ls -di "$1" | awk '{print $1}'; }
+waitfor(){ local i=0; while [ ! -e "$1" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; [ -e "$1" ]; }
 ENG="$ROOT/Scripts/.dripfeed/dripfeed-engine.sh"
 SCH="$ROOT/Scripts/.dripfeed/dripfeed-install.sh"
 SC="$ROOT/Scripts/.dripfeed/dripfeed-schedule.sh"
@@ -145,6 +163,7 @@ chk "folder name carries the custom message" 'echo "$SHOW" | grep -q "Happy Birt
 chk "folder name capped to OSD width (<=30 after leading _)" '[ "$(printf %s "$(basename "$SHOW")" | wc -c)" -le 31 ]'
 chk ".mgl shortcut names show the system" 'ls "$SHOW" | grep -q "^GENESIS - Shiny Forts.mgl$"'
 chk ".mgl points at the current default core (MegaDrive)" 'grep -q "<rbf>_Console/MegaDrive</rbf>" "$SHOW/GENESIS - Shiny Forts.mgl"'
+chk "multi-disc shortcut launches the first disc (d1.chd), never the .m3u; Saturn delay 2" 'grep -q "path=\"[^\"]*/Shiny Forts III/d1.chd\"" "$SHOW/Saturn - Shiny Forts III.mgl" && ! grep -q "\.m3u\"" "$SHOW/Saturn - Shiny Forts III.mgl" && grep -q "delay=\"2\"" "$SHOW/Saturn - Shiny Forts III.mgl"'
 chk "gamelist.xml written (no leftover .tmp)" '[ -f "$SHOW/gamelist.xml" ] && [ ! -e "$SHOW/gamelist.xml.tmp" ]'
 chk "gamelist desc carries the FULL message" 'grep -q "Happy Birthday Player One" "$SHOW/gamelist.xml"'
 
@@ -286,6 +305,397 @@ chk "undrip removed staging folders" '[ ! -d "$ROOT/games/SNES/.dripfeed" ]'
 chk "undrip removed state (Scripts/.dripfeed) and Undrip.sh" '[ ! -d "$ROOT/Scripts/.dripfeed" ] && [ ! -f "$ROOT/Scripts/Undrip.sh" ]'
 chk "undrip removed the boot hook" '! grep -q DRIPFEED_AUTORUN "$ROOT/linux/user-startup.sh"'
 chk "undrip KEPT Scripts/Dripfeed.sh" '[ -f "$ROOT/Scripts/Dripfeed.sh" ]'
+
+echo "== browser leftovers: .crswap swap files and 0-byte entries are never revealed =="
+newcard CA; mkdir -p "$CA/games/PSX" "$CA/.dripfeed-library/PSX"
+echo partial > "$CA/.dripfeed-library/PSX/${TODAY}_Big Game.chd.crswap"
+: > "$CA/.dripfeed-library/PSX/${TODAY}_Lone Placeholder.chd"
+echo real > "$CA/.dripfeed-library/PSX/${TODAY}_Real Game.chd"
+eng "$CA" --auto >/dev/null 2>&1
+chk ".crswap swap file is skipped (never revealed, left in the library)" '[ ! -e "$CA/games/PSX/Big Game.chd.crswap" ] && [ ! -e "$CA/games/PSX/Big Game.chd" ] && [ -f "$CA/.dripfeed-library/PSX/${TODAY}_Big Game.chd.crswap" ]'
+chk "0-byte queue entry is held, never revealed as a playable-looking game" '[ ! -e "$CA/games/PSX/Lone Placeholder.chd" ] && [ -e "$CA/.dripfeed-library/PSX/${TODAY}_Lone Placeholder.chd" ] && grep -q "RECOVERY HOLD.*Lone Placeholder" "$CA/Scripts/.dripfeed/dripfeed.log"'
+: > "$CA/games/PSX/Empty Visible.chd"
+printf '2099-01-01\tPSX\tEmpty Visible.chd\n' > "$CA/Scripts/.dripfeed/schedule-requests.tsv"
+EOUT="$(sch "$CA" add PSX 2099-01-02 "$CA/games/PSX/Empty Visible.chd" 2>&1)"; eng "$CA" --auto >/dev/null 2>&1
+chk "an empty (0-byte) file is never scheduled by the CLI or a browser request" '[ -f "$CA/games/PSX/Empty Visible.chd" ] && printf "%s\n" "$EOUT" | grep -q "empty 0-byte file" && [ ! -s "$CA/Scripts/.dripfeed/schedule-requests.tsv" ] && ! ls "$CA/.dripfeed-library/PSX" | grep -q "Empty Visible"'
+chk "a complete game beside them still reveals; the ledger records no leftover" '[ -f "$CA/games/PSX/Real Game.chd" ] && ! grep -Eq "crswap|Lone Placeholder" "$CA/Scripts/.dripfeed/revealed.tsv"'
+DIAG="$(eng "$CA" --diag 2>&1)"
+chk "--diag labels the swap file and the empty entry" 'printf "%s\n" "$DIAG" | grep -q "Big Game.chd.crswap.*BROWSER-SWAP-FILE" && printf "%s\n" "$DIAG" | grep -q "Lone Placeholder.chd.*EMPTY-FILE-HOLD"'
+eng "$CA" --undrip >/dev/null 2>&1
+chk "Undrip quarantines leftovers instead of restoring them into games/" '[ ! -e "$CA/games/PSX/${TODAY}_Big Game.chd.crswap" ] && [ ! -e "$CA/games/PSX/Big Game.chd.crswap" ] && [ ! -e "$CA/games/PSX/Lone Placeholder.chd" ] && find "$CA/.dripfeed-library/.conflicts/PSX" -name "*Lone Placeholder.chd" | grep -q .'
+
+echo "== same-drive guard: moves are renames, never copy+delete =="
+newcard CB; mkdir -p "$CB/games/PSX/Big Set (USA)"
+mksparse "$CB/games/PSX/Big Set (USA)/Big Set (USA).chd" 5368709120
+INO1="$(inode "$CB/games/PSX/Big Set (USA)")"
+sch "$CB" add PSX today "$CB/games/PSX/Big Set (USA)" >/dev/null 2>&1
+eng "$CB" --auto >/dev/null 2>&1
+chk "a 5 GB sparse disc set schedules and reveals as a rename (same inode, nothing copied)" '[ "$(inode "$CB/games/PSX/Big Set (USA)")" = "$INO1" ] && [ -f "$CB/games/PSX/Big Set (USA)/Big Set (USA).chd" ]'
+# A second filesystem: tmpfs when available, otherwise a stat shim that reports a
+# different device for the "other drive" (the guard must refuse before any mv).
+XLIB=""; XSHIM=""
+if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+  XLIB="$(mktemp -d /dev/shm/dripfeed-xdev.XXXXXX 2>/dev/null)"
+  if [ -n "$XLIB" ] && [ "$(stat -c %d "$XLIB" 2>/dev/null || stat -f %d "$XLIB")" = "$(stat -c %d "$ROOT" 2>/dev/null || stat -f %d "$ROOT")" ]; then rm -rf "$XLIB"; XLIB=""; fi
+fi
+if [ -z "$XLIB" ]; then
+  scratch XLIB; scratch XSHIM; REAL_STAT="$(command -v stat)"
+  printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\ncase "$last" in "%s"*) echo 4242; exit 0 ;; esac\nexec "%s" "$@"\n' "$XLIB" "$REAL_STAT" > "$XSHIM/stat"
+  chmod +x "$XSHIM/stat"
+fi
+CARDS="$CARDS $XLIB"; XPATH="${XSHIM:+$XSHIM:}$PATH"
+newcard CX; mkdir -p "$CX/games/SNES"
+printf 'STAGING_ROOT=%s\n' "$XLIB" >> "$CX/Scripts/.dripfeed/config.ini"
+mksparse "$CX/games/SNES/Huge Game.sfc" 67108864
+XOUT="$(PATH="$XPATH" sch "$CX" add SNES 2099-01-01 "$CX/games/SNES/Huge Game.sfc" 2>&1)"
+chk "CLI add across drives is held: game untouched, nothing copied" '[ -f "$CX/games/SNES/Huge Game.sfc" ] && [ -z "$(ls -A "$XLIB/SNES" 2>/dev/null)" ] && printf "%s\n" "$XOUT" | grep -q "different drive"'
+printf '2099-01-01\tSNES\tHuge Game.sfc\n' > "$CX/Scripts/.dripfeed/schedule-requests.tsv"
+PATH="$XPATH" eng "$CX" --auto >/dev/null 2>&1
+chk "browser request across drives is held and kept for a later pass" '[ -f "$CX/games/SNES/Huge Game.sfc" ] && [ -s "$CX/Scripts/.dripfeed/schedule-requests.tsv" ] && grep -q "CROSS-DEVICE HOLD" "$CX/Scripts/.dripfeed/dripfeed.log" && [ -z "$(ls -A "$XLIB/SNES" 2>/dev/null)" ]'
+mkdir -p "$XLIB/SNES"; echo due > "$XLIB/SNES/${TODAY}_Due Across.sfc"
+PATH="$XPATH" eng "$CX" --auto >/dev/null 2>&1
+chk "reveal across drives is held: no partial game, no journal, queue intact" '[ ! -e "$CX/games/SNES/Due Across.sfc" ] && [ -f "$XLIB/SNES/${TODAY}_Due Across.sfc" ] && [ ! -f "$CX/Scripts/.dripfeed/transactions/current.tsv" ] && ! grep -q "Due Across" "$CX/Scripts/.dripfeed/revealed.tsv" 2>/dev/null'
+chk "--diag says the games and the library are on different drives" 'PATH="$XPATH" eng "$CX" --diag 2>&1 | grep -q "DIFFERENT DRIVES"'
+mkdir -p "$CX/games/SNES/.dripfeed"; echo leg > "$CX/games/SNES/.dripfeed/2099-02-02_Legacy Across.sfc"
+PATH="$XPATH" eng "$CX" --migrate >/dev/null 2>&1
+chk "legacy migration across drives is held in place (never copied)" '[ -f "$CX/games/SNES/.dripfeed/2099-02-02_Legacy Across.sfc" ] && [ ! -e "$XLIB/SNES/2099-02-02_Legacy Across.sfc" ] && grep -q "LEGACY MIGRATION held" "$CX/Scripts/.dripfeed/dripfeed.log"'
+XOUT="$(PATH="$XPATH" eng "$CX" --undrip 2>&1)"
+chk "Undrip never copies across drives: the queued game stays in its library" '[ -f "$XLIB/SNES/${TODAY}_Due Across.sfc" ] && [ ! -e "$CX/games/SNES/Due Across.sfc" ] && printf "%s\n" "$XOUT" | grep -q "DIFFERENT DRIVE"'
+newcard CW; mkdir -p "$CW/games/PSX" "$CW/.dripfeed-library/PSX/${TODAY}_Usb Shadowed"
+echo d > "$CW/.dripfeed-library/PSX/2099-01-01_Waiting.chd"
+mkdir -p "$CW/media/usb0/games/PSX" "$CW/cifs/PSX"
+chk "--diag warns when a USB or cifs PSX folder would shadow games/PSX" 'DRIPFEED_MEDIA="$CW/media" eng "$CW" --diag 2>&1 | grep -q "usb0/games/PSX exists" && DRIPFEED_MEDIA="$CW/media" eng "$CW" --diag 2>&1 | grep -q "cifs/PSX exists"'
+
+echo "== single-runner lock: owner pid, never stolen from a live holder =="
+newcard CL; mkdir -p "$CL/games/SNES"; echo a > "$CL/games/SNES/Locked Out.sfc"
+DRIPFEED_ROOT="$CL" bash -c '. "$DRIPFEED_ROOT/Scripts/.dripfeed/dripfeed-common.sh"; df_lock || exit 1; : > "$DRIPFEED_ROOT/held"; exec sleep 30' &
+HOLDER=$!; KILLS="$KILLS $HOLDER"; waitfor "$CL/held"
+echo 1 > "$CL/Scripts/.dripfeed/.lock/ts"          # make the live lock look ancient
+LOUT="$(sch "$CL" add SNES today "$CL/games/SNES/Locked Out.sfc" 2>&1)"
+chk "CLI scheduler waits briefly, then refuses with a clear message" '[ -f "$CL/games/SNES/Locked Out.sfc" ] && printf "%s\n" "$LOUT" | grep -q "Dripfeed is busy"'
+LOUT="$(eng "$CL" --undrip 2>&1)"
+chk "Undrip refuses while another process holds the lock (nothing removed)" 'printf "%s\n" "$LOUT" | grep -q "Dripfeed is busy" && [ -f "$CL/Scripts/.dripfeed/config.ini" ] && grep -q DRIPFEED_AUTORUN "$CL/linux/user-startup.sh"'
+eng "$CL" --auto >/dev/null 2>&1
+chk "a live holder is never preempted, even with an ancient timestamp" '[ "$(sed -n 1p "$CL/Scripts/.dripfeed/.lock/owner")" = "$HOLDER" ] && grep -q "reveal skipped (another pass holds the lock)" "$CL/Scripts/.dripfeed/dripfeed.log"'
+lib "$CL" 'DF_LOCK_HELD=1; df_unlock'
+chk "a process never removes a lock it does not own" '[ -d "$CL/Scripts/.dripfeed/.lock" ] && [ "$(sed -n 1p "$CL/Scripts/.dripfeed/.lock/owner")" = "$HOLDER" ]'
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+sch "$CL" add SNES today "$CL/games/SNES/Locked Out.sfc" >/dev/null 2>&1
+eng "$CL" --auto >/dev/null 2>&1
+chk "a dead holder's lock is reclaimed at once and released after the pass" '[ -f "$CL/games/SNES/Locked Out.sfc" ] && grep -q "reclaimed a stale lock" "$CL/Scripts/.dripfeed/dripfeed.log" && grep -q "Locked Out.sfc" "$CL/Scripts/.dripfeed/revealed.tsv" && [ ! -d "$CL/Scripts/.dripfeed/.lock" ]'
+mkdir "$CL/Scripts/.dripfeed/.lock"; date +%s > "$CL/Scripts/.dripfeed/.lock/ts"
+echo b > "$CL/games/SNES/Old Format.sfc"; LOUT="$(sch "$CL" add SNES today "$CL/games/SNES/Old Format.sfc" 2>&1)"
+echo 1 > "$CL/Scripts/.dripfeed/.lock/ts"; LOUT2="$(sch "$CL" add SNES today "$CL/games/SNES/Old Format.sfc" 2>&1)"
+chk "an owner-less lock from an older version keeps the 10-minute rule" 'printf "%s\n" "$LOUT" | grep -q "Dripfeed is busy" && printf "%s\n" "$LOUT2" | grep -q "scheduled" && [ ! -d "$CL/Scripts/.dripfeed/.lock" ]'
+
+echo "== boot hook: start only (MiSTer also runs user-startup.sh with stop at shutdown) =="
+newcard CH; mkdir -p "$CH/games/SNES"; echo s > "$CH/games/SNES/Shutdown Test.sfc"
+sch "$CH" add SNES today "$CH/games/SNES/Shutdown Test.sfc" >/dev/null 2>&1
+printf "POST_REVEAL_CMD='echo ran >> \"%s/post.out\"'\n" "$CH" >> "$CH/Scripts/.dripfeed/config.ini"
+DRIPFEED_ROOT="$CH" sh "$CH/linux/user-startup.sh" stop >/dev/null 2>&1; sleep 1
+chk "stop (shutdown/reboot) starts nothing: no watcher, no reveal, no command, boot.log untouched" '[ ! -e "$CH/Scripts/.dripfeed/watch.pid" ] && [ ! -e "$CH/Scripts/.dripfeed/boot.log" ] && [ ! -e "$CH/games/SNES/Shutdown Test.sfc" ] && [ ! -e "$CH/post.out" ]'
+DRIPFEED_ROOT="$CH" sh "$CH/linux/user-startup.sh" start >/dev/null 2>&1
+waitfor "$CH/Scripts/.dripfeed/watch.pid"; WP="$(sed -n 1p "$CH/Scripts/.dripfeed/watch.pid" 2>/dev/null)"; KILLS="$KILLS $WP"
+chk "start (boot) launches the watcher" '[ -n "$WP" ] && kill -0 "$WP" 2>/dev/null'
+kill "$WP" 2>/dev/null
+US_CH="$CH/linux/user-startup.sh"
+sed '/=====DRIPFEED_AUTORUN=====/,/=====DRIPFEED_AUTORUN_END=====/d' "$US_CH" > "$US_CH.tmp" && mv "$US_CH.tmp" "$US_CH"
+printf '\n#=====DRIPFEED_AUTORUN=====\n[ -f %s ] && %s --watch >%s 2>&1 &\n#=====DRIPFEED_AUTORUN_END=====\n' "$CH/Scripts/.dripfeed/dripfeed-engine.sh" "$CH/Scripts/.dripfeed/dripfeed-engine.sh" "$CH/Scripts/.dripfeed/boot.log" >> "$US_CH"
+DRIPFEED_ROOT="$CH" bash "$CH/Scripts/.dripfeed/dripfeed-install.sh" >/dev/null 2>&1
+chk "reinstall replaces an older always-on hook with the start-only one, exactly once" '[ "$(grep -c "=====DRIPFEED_AUTORUN=====" "$US_CH")" = 1 ] && grep -q "in start|" "$US_CH" && ! grep -q "^\[ -f" "$US_CH"'
+
+echo "== scale: process spawns stay linear in queue size =="
+newcard CP; mkdir -p "$CP/games/SNES"; N=60; scratch SPAWN
+for t in awk sed grep sort head tail cut tr wc cat date mkdir mv rm sync stat ls find touch basename dirname cp; do
+  real="$(command -v "$t" 2>/dev/null)"; [ -n "$real" ] || continue
+  printf '#!/bin/sh\necho %s >> "%s/count"\nexec "%s" "$@"\n' "$t" "$SPAWN" "$real" > "$SPAWN/$t"; chmod +x "$SPAWN/$t"
+done
+spawns(){ : > "$SPAWN/count"; PATH="$SPAWN:$PATH" "$@" >/dev/null 2>&1; wc -l < "$SPAWN/count" | tr -d ' '; }
+i=1; while [ "$i" -le "$N" ]; do echo x > "$CP/games/SNES/Game $i.sfc"; printf '2099-12-31\tSNES\tGame %s.sfc\n' "$i"; i=$((i+1)); done > "$CP/Scripts/.dripfeed/schedule-requests.tsv"
+S_REQ="$(spawns eng "$CP" --auto)"
+i=1; while [ "$i" -le "$N" ]; do printf '2099-12-30\tSNES\tGame %s.sfc\n' "$i"; i=$((i+1)); done > "$CP/Scripts/.dripfeed/schedule-requests.tsv"
+S_RED="$(spawns eng "$CP" --auto)"
+S_DIAG="$(spawns eng "$CP" --diag)"
+i=1; while [ "$i" -le "$N" ]; do echo x > "$CP/games/SNES/More $i.sfc"; i=$((i+1)); done
+S_ADD="$(spawns sch "$CP" add SNES 2099-12-29 "$CP"/games/SNES/More*.sfc)"
+echo "    (spawns for $N games: request lane $S_REQ, re-date lane $S_RED, diag $S_DIAG, CLI add $S_ADD)"
+chk "request lanes, --diag and CLI add spawn O(N) processes (not one rescan per game)" '[ "$S_REQ" -le $((3*N+60)) ] && [ "$S_RED" -le $((3*N+60)) ] && [ "$S_DIAG" -le $((N+60)) ] && [ "$S_ADD" -le $((3*N+60)) ]'
+chk "every game was scheduled, re-dated and added exactly once" '[ "$(ls "$CP/.dripfeed-library/SNES" | grep -c "^2099-12-30_Game ")" = "$N" ] && [ "$(ls "$CP/.dripfeed-library/SNES" | grep -c "^2099-12-29_More ")" = "$N" ] && [ ! -s "$CP/Scripts/.dripfeed/schedule-requests.tsv" ]'
+
+echo "== multi-disc shortcut target (MiSTer mounts .cue/.chd, never .m3u) =="
+scratch MG; mkdir -p "$MG/out"
+FQ="$MG/PSX/Final Quest (USA)"; mkdir -p "$FQ"
+for n in 1 2; do printf 'FILE "Final Quest (USA) (Disc %s).bin" BINARY\n  TRACK 01 MODE2/2352\n' "$n" > "$FQ/Final Quest (USA) (Disc $n).cue"; echo b > "$FQ/Final Quest (USA) (Disc $n).bin"; done
+printf '\357\273\277Final Quest (USA) (Disc 1).cue\r\nFinal Quest (USA) (Disc 2).cue\r\n' > "$FQ/FQ.m3u"     # sorts BEFORE the discs
+ND="$MG/Saturn/Natural Order"; mkdir -p "$ND"; for n in 11 10 2; do echo c > "$ND/Disc $n.chd"; done
+IS="$MG/PSX/Iso First"; mkdir -p "$IS"; printf 'Iso First.iso\n' > "$IS/Iso First.m3u"; echo i > "$IS/Iso First.iso"; echo c > "$IS/Track Disc 1.chd"
+IO="$MG/PSX/Iso Only"; mkdir -p "$IO"; echo i > "$IO/Iso Only.iso"
+mglpath(){ sed -n 's/.*path="\([^"]*\)".*/\1/p' "$1"; }
+DRIPFEED_ROOT="$MG" bash -c '. "$0/dripfeed-common.sh"; df_make_mgl "$1/out" PSX "$2"; df_make_mgl "$1/out" Saturn "$3"; df_make_mgl "$1/out" PSX "$4"; df_make_mgl "$1/out" PSX "$5" && echo LAUNCHABLE' "$SRC" "$MG" "$FQ" "$ND" "$IS" "$IO" > "$MG/res.txt" 2>&1
+chk "playlist with BOM/CRLF: shortcut launches its first entry, (Disc 1).cue" '[ "$(mglpath "$MG/out/PSX - Final Quest (USA).mgl")" = "$FQ/Final Quest (USA) (Disc 1).cue" ]'
+chk "no playlist: first .chd in natural order (Disc 2 before Disc 10)" '[ "$(mglpath "$MG/out/Saturn - Natural Order.mgl")" = "$ND/Disc 2.chd" ]'
+chk "a playlist that starts with an .iso is ignored for CD cores (.chd used)" '[ "$(mglpath "$MG/out/PSX - Iso First.mgl")" = "$IS/Track Disc 1.chd" ]'
+chk "nothing launchable (.iso only): no shortcut, logged" '[ ! -e "$MG/out/PSX - Iso Only.mgl" ] && ! grep -q LAUNCHABLE "$MG/res.txt" && grep -q "no launchable disc.*Iso Only" "$MG/Scripts/.dripfeed/dripfeed.log"'
+newcard CM; mkdir -p "$CM/games/PSX"; cp -R "$FQ" "$CM/games/PSX/"
+printf '%s\tgames/PSX/Final Quest (USA)\n' "$MONTH_NOW" > "$CM/Scripts/.dripfeed/gotm.tsv"
+eng "$CM" --gotm >/dev/null 2>&1
+chk "GOT'eM multi-disc pick launches (Disc 1).cue too" '[ "$(mglpath "$CM/_Game of the Month/PSX - Final Quest (USA).mgl")" = "$CM/games/PSX/Final Quest (USA)/Final Quest (USA) (Disc 1).cue" ]'
+
+echo "== What's New pruner reads escaped paths (& ' stay; nothing pruned) =="
+newcard CG; mkdir -p "$CG/games/SNES" "$CG/games/GENESIS"
+echo k > "$CG/games/SNES/Kirby's Dream Course (USA).sfc"; echo t > "$CG/games/GENESIS/ToeJam & Earl, Panic on Funkotron.gen"
+sch "$CG" add SNES today "$CG/games/SNES/Kirby's Dream Course (USA).sfc" >/dev/null 2>&1
+sch "$CG" add GENESIS today "$CG/games/GENESIS/ToeJam & Earl, Panic on Funkotron.gen" >/dev/null 2>&1
+eng "$CG" --auto >/dev/null 2>&1; eng "$CG" --auto >/dev/null 2>&1; eng "$CG" --auto >/dev/null 2>&1
+SG="$CG/$(cat "$CG/Scripts/.dripfeed/showcase_name")"
+chk "shortcuts for names with an apostrophe or ampersand survive later passes" '[ -f "$SG/SNES - Kirby'"'"'s Dream Course (USA).mgl" ] && [ -f "$SG/GENESIS - ToeJam & Earl, Panic on Funkotron.mgl" ] && ! grep -q "pruned orphan" "$CG/Scripts/.dripfeed/dripfeed.log"'
+UNESC="$(printf '%s' '&quot;&apos;&lt;&gt;&amp;amp;' | bash -c '. "$0/dripfeed-common.sh"; df_xml_unescape' "$SRC")"
+chk "df_xml_unescape decodes all five entities, &amp; last" '[ "$UNESC" = "\"'"'"'<>&amp;" ]'
+chk "gamelist.xml escapes every field (no bare &)" '! sed "s/&amp;//g; s/&lt;//g; s/&gt;//g; s/&quot;//g; s/&apos;//g" "$SG/gamelist.xml" | grep -q "&" && grep -q "<path>./GENESIS - ToeJam &amp; Earl, Panic on Funkotron.mgl</path>" "$SG/gamelist.xml"'
+awk -F'\t' -v OFS='\t' '$3 ~ /^ToeJam/ { $4 = "2026-01-02 03:04:05" } 1' "$CG/Scripts/.dripfeed/revealed.tsv" > "$CG/led.tmp" && mv "$CG/led.tmp" "$CG/Scripts/.dripfeed/revealed.tsv"
+eng "$CG" --auto >/dev/null 2>&1
+chk "gamelist releasedate comes from the reveal ledger, not today" 'grep -A3 "<path>./GENESIS - ToeJam" "$SG/gamelist.xml" | grep -q "<releasedate>20260102T030405</releasedate>"'
+
+echo "== disc-set completeness tolerates real-world playlists =="
+newcard CD; mkdir -p "$CD/games/PSX"; L="$CD/.dripfeed-library/PSX"
+mkset(){ mkdir -p "$L/${TODAY}_$1"; shift; local s="$1"; shift; for f in "$@"; do echo disc > "$L/${TODAY}_$s/$f"; done; }
+mkset "Bom Set" "Bom Set" "Disc 1.chd" "Disc 2.chd"; printf '\357\273\277Disc 1.chd\r\nDisc 2.chd\r\n' > "$L/${TODAY}_Bom Set/Bom Set.m3u"
+mkset "Trail Set" "Trail Set" "Disc 1.chd" "Disc 2.chd"; printf 'Disc 1.chd \nDisc 2.chd\t\n' > "$L/${TODAY}_Trail Set/Trail Set.m3u"
+mkset "Abs Set" "Abs Set" "Disc 1.chd" "Disc 2.chd"; printf '/media/fat/games/PSX/Abs Set/Disc 1.chd\nC:\\Games\\Abs Set\\Disc 2.chd\n' > "$L/${TODAY}_Abs Set/Abs Set.m3u"
+mkset "Cue Bom" "Cue Bom" "Track 01.bin"; printf '\357\273\277FILE "Track 01.bin" BINARY\r\n  TRACK 01 MODE2/2352\r\n' > "$L/${TODAY}_Cue Bom/Cue Bom.cue"
+mkset "Comment Only" "Comment Only" "Game.chd"; printf '#EXTM3U\n# made by a playlist tool\n' > "$L/${TODAY}_Comment Only/Comment Only.m3u"
+mkset "Missing Disc" "Missing Disc" "Disc 1.chd"; printf 'Disc 1.chd\nDisc 2.chd\n' > "$L/${TODAY}_Missing Disc/Missing Disc.m3u"
+mkset "Empty Disc" "Empty Disc" "Disc 1.chd"; : > "$L/${TODAY}_Empty Disc/Disc 2.chd"; printf 'Disc 1.chd\nDisc 2.chd\n' > "$L/${TODAY}_Empty Disc/Empty Disc.m3u"
+eng "$CD" --auto >/dev/null 2>&1
+chk "BOM+CRLF, trailing-space, absolute-path, BOM .cue and comment-only playlists reveal" '[ -d "$CD/games/PSX/Bom Set" ] && [ -d "$CD/games/PSX/Trail Set" ] && [ -d "$CD/games/PSX/Abs Set" ] && [ -d "$CD/games/PSX/Cue Bom" ] && [ -d "$CD/games/PSX/Comment Only" ]'
+chk "a set with a genuinely missing disc stays held" '[ ! -e "$CD/games/PSX/Missing Disc" ] && [ -d "$L/${TODAY}_Missing Disc" ]'
+chk "a set whose disc is a 0-byte placeholder stays held" '[ ! -e "$CD/games/PSX/Empty Disc" ] && [ -d "$L/${TODAY}_Empty Disc" ]'
+
+echo "== robustness: config validation, --diag counts, list order, no dead code =="
+newcard CR; mkdir -p "$CR/games/SNES"
+printf 'WATCH_INTERVAL=0\nBOOT_DELAY=soon\nSHOWCASE_KEEP=-3\nSYSTEM_SHORTCUTS=maybe\nSYSTEM_SHORTCUTS_DIR="../escape"\n' >> "$CR/Scripts/.dripfeed/config.ini"
+VALS="$(lib "$CR" 'echo "$WATCH_INTERVAL|$BOOT_DELAY|$SHOWCASE_KEEP|$SYSTEM_SHORTCUTS|$SYSTEM_SHORTCUTS_DIR"')"
+chk "settings are validated (WATCH_INTERVAL never below 60; bad values and unsafe folder names fall back)" '[ "$VALS" = "60|30|12|0|_Dripfeed New" ]'
+: > "$CR/Scripts/.dripfeed/schedule-requests.tsv"; : > "$CR/Scripts/.dripfeed/unschedule-requests.tsv"
+DIAG="$(eng "$CR" --diag 2>&1)"
+chk "--diag prints request counts once (no stray 0 line)" 'printf "%s\n" "$DIAG" | grep -q "schedule=0, unschedule=0" && ! printf "%s\n" "$DIAG" | grep -qx "0"'
+chk "dead WAIT_BUTTON code is gone" '! grep -Eq "WAIT_BUTTON|WAIT_TIMEOUT|df_wait_button" "$SRC"/*.sh'
+mkdir -p "$CR/.dripfeed-library/SNES" "$CR/games/SNES/.dripfeed"
+echo a > "$CR/.dripfeed-library/SNES/2099-03-01_Third.sfc"; echo b > "$CR/.dripfeed-library/SNES/2099-01-01_First.sfc"; echo c > "$CR/games/SNES/.dripfeed/2099-02-01_Second.sfc"
+LIST="$(sch "$CR" list 2>&1 | awk '{print $NF}' | tr '\n' ' ')"
+chk "list is sorted by date across the current and legacy queues" '[ "$LIST" = "First.sfc Second.sfc Third.sfc " ]'
+scratch NOBOOT; printf '#!/bin/sh\n: > "%s/rebooted"\n' "$NOBOOT" > "$NOBOOT/reboot"; chmod +x "$NOBOOT/reboot"
+newcard CZ; rm -rf "$CZ/Scripts/.dripfeed"; cp "$HERE/../Scripts/Dripfeed.sh" "$CZ/Scripts/Dripfeed.sh"
+LOUT="$(PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Dripfeed.sh" </dev/null 2>&1)"
+chk "launcher outside MiSTer installs but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ "$(cat "$CZ/Scripts/.dripfeed/.version")" = "1.4.0" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+LOUT="$(printf x | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
+chk "Undrip.sh outside MiSTer resets but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ ! -d "$CZ/Scripts/.dripfeed" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+scratch NOCARD; NOWHERE="$NOCARD/not-a-card"
+PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$NOWHERE" bash "$HERE/../Scripts/Dripfeed.sh" </dev/null >/dev/null 2>&1; RC=$?
+chk "launcher refuses a root without Scripts/ and creates nothing there" '[ "$RC" -ne 0 ] && [ ! -e "$NOWHERE" ] && [ ! -e "$NOBOOT/rebooted" ]'
+
+echo "== MGL map re-synced with the current mrext catalog =="
+ML(){ bash -c '. "$0/dripfeed-common.sh"; df_mgl_lookup "$1" "$2" || { echo none; exit 0; }; echo "$RBF|$MTYPE|$MINDEX|$DELAY|$SETNAME|$RESET_DELAY"' "$SRC" "$1" "$2"; }
+chk "Jaguar cart: f/0 plus a reset; Jaguar CD .cdi: s/1" '[ "$(ML Jaguar .jag)" = "_Console/Jaguar|f|0|1||1" ] && [ "$(ML Jaguar .cdi)" = "_Console/Jaguar|s|1|1||1" ]'
+chk "NeoGeo Pocket: JTNGP core with its set name, delay 2" '[ "$(ML NGP .ngp)" = "_Arcade/JTNGP|f|1|2|NeoGeoPocket|0" ]'
+chk "Saturn: s/0 with delay 2; MegaCD stays s/0 delay 1" '[ "$(ML Saturn .chd)" = "_Console/Saturn|s|0|2||0" ] && [ "$(ML MegaCD .cue)" = "_Console/MegaCD|s|0|1||0" ]'
+chk ".gg in the SMS folder: Game Gear slot, no set name; GameGear folder keeps it" '[ "$(ML SMS .gg)" = "_Console/SMS|f|2|1||0" ] && [ "$(ML SMS .sms)" = "_Console/SMS|f|1|1||0" ] && [ "$(ML GameGear .GG)" = "_Console/SMS|f|2|1|GameGear|0" ]'
+chk "PSX: .cue/.chd s/1, .exe f/1; .iso and .m3u refused" '[ "$(ML PSX .cue)" = "_Console/PSX|s|1|1||0" ] && [ "$(ML PSX .exe)" = "_Console/PSX|f|1|1||0" ] && [ "$(ML PSX .iso)" = none ] && [ "$(ML PSX .m3u)" = none ]'
+chk "ZX Spectrum: disk s/0, tape f/2, snapshot f/4" '[ "$(ML Spectrum .trd)" = "_Computer/ZX-Spectrum|s|0|1||0" ] && [ "$(ML Spectrum .tzx)" = "_Computer/ZX-Spectrum|f|2|1||0" ] && [ "$(ML Spectrum .z80)" = "_Computer/ZX-Spectrum|f|4|1||0" ]'
+chk ".zip, unknown extensions and unknown systems are refused (shortcut skipped)" '[ "$(ML SNES .zip)" = none ] && [ "$(ML NES .txt)" = none ] && [ "$(ML Vectrex .vec)" = none ] && [ "$(ML SNES .sfc)" = "_Console/SNES|f|0|2||0" ]'
+newcard CJ; mkdir -p "$CJ/games/Jaguar" "$CJ/games/SNES"; echo j > "$CJ/games/Jaguar/Cart.jag"; echo z > "$CJ/games/SNES/Zipped.zip"
+sch "$CJ" add Jaguar today "$CJ/games/Jaguar/Cart.jag" >/dev/null 2>&1; sch "$CJ" add SNES today "$CJ/games/SNES/Zipped.zip" >/dev/null 2>&1
+eng "$CJ" --auto >/dev/null 2>&1; SJ="$CJ/$(cat "$CJ/Scripts/.dripfeed/showcase_name")"
+chk "Jaguar shortcut carries <reset delay=1 hold=1>; a .zip gets no shortcut (logged)" 'grep -q "<reset delay=\"1\" hold=\"1\"/>" "$SJ/Jaguar - Cart.mgl" && [ ! -e "$SJ/SNES - Zipped.mgl" ] && [ -f "$CJ/games/SNES/Zipped.zip" ] && grep -q "no MGL slot for SNES (.zip)" "$CJ/Scripts/.dripfeed/dripfeed.log"'
+
+echo "== GOT'eM arcade core lookup matches the firmware's rule =="
+newcard CK; mkdir -p "$CK/_Arcade/cores"
+for c in jtcps1_20240101 jtcps15_20260101 jtcps1_20250301 Arcade-jtcps1_20230101 Arcade-JTX_20240101; do echo core > "$CK/_Arcade/cores/$c.rbf"; done
+printf '<misterromdescription><rbf>jtcps1</rbf></misterromdescription>\n' > "$CK/_Arcade/Final Fight.mra"
+printf '<misterromdescription><rbf>jtx</rbf></misterromdescription>\n' > "$CK/_Arcade/Arcade Form.mra"
+printf '<misterromdescription><rbf>nosuchcore</rbf></misterromdescription>\n' > "$CK/_Arcade/No Core.mra"
+printf '%s\t_Arcade/Final Fight.mra\n' "$MONTH_NOW" > "$CK/Scripts/.dripfeed/gotm.tsv"; eng "$CK" --gotm >/dev/null 2>&1
+chk "exact core name wins over a longer one (jtcps1, not jtcps15), newest version" '[ "$(ls "$CK/_Game of the Month/cores")" = "jtcps1_20250301.rbf" ]'
+printf '%s\t_Arcade/Arcade Form.mra\n' "$MONTH_NOW" > "$CK/Scripts/.dripfeed/gotm.tsv"; eng "$CK" --gotm >/dev/null 2>&1
+chk "the 'Arcade-<rbf>' form is found, case-insensitively" '[ "$(ls "$CK/_Game of the Month/cores")" = "Arcade-JTX_20240101.rbf" ]'
+printf '%s\t_Arcade/No Core.mra\n' "$MONTH_NOW" > "$CK/Scripts/.dripfeed/gotm.tsv"; eng "$CK" --gotm >/dev/null 2>&1
+chk "a missing core is logged (and nothing wrong is copied)" '[ ! -d "$CK/_Game of the Month/cores" ] && grep -q "no core named .nosuchcore." "$CK/Scripts/.dripfeed/dripfeed.log"'
+
+newcard CV; mkdir -p "$CV/_Arcade/cores" "$CV/games/SNES"
+echo core > "$CV/_Arcade/cores/mycore_20240101.rbf"; printf '<misterromdescription><rbf>mycore</rbf></misterromdescription>\n' > "$CV/_Arcade/My Game.mra"
+echo g > "$CV/games/SNES/Pick.sfc"
+printf 'GOTM_DIRNAME="_Arcade"\n' >> "$CV/Scripts/.dripfeed/config.ini"
+printf '%s\tgames/SNES/Pick.sfc\n' "$MONTH_NOW" > "$CV/Scripts/.dripfeed/gotm.tsv"
+eng "$CV" --gotm >/dev/null 2>&1; eng "$CV" --undrip >/dev/null 2>&1
+chk "GOTM_DIRNAME naming a MiSTer folder (_Arcade) never wipes it, not even on Undrip" '[ -f "$CV/_Arcade/My Game.mra" ] && [ -f "$CV/_Arcade/cores/mycore_20240101.rbf" ] && [ ! -e "$CV/_Arcade/SNES - Pick.mgl" ]'
+
+echo "== stale menu folders: custom prefix, Favorites mirror, exact Undrip =="
+newcard CS; mkdir -p "$CS/games/SNES" "$CS/_@Favorites/My Faves" "$CS/_@Favorites/_Dripfeed - New Mon Jan 5, 26" "$CS/_New Games - New Mon Oct 5, 26" "$CS/_New Games - Mine"
+printf 'SHOWCASE_PREFIX="_New Games - "\nFAVORITES_MIRROR=1\n' >> "$CS/Scripts/.dripfeed/config.ini"
+echo o > "$CS/games/SNES/Old Pick.sfc"; echo m > "$CS/games/SNES/Mine.sfc"; echo n > "$CS/games/SNES/New Pick.sfc"
+printf '2026-01-05\tSNES\tOld Pick.sfc\t2026-01-05 10:00:00\n' > "$CS/Scripts/.dripfeed/revealed.tsv"
+printf '_New Games - New Mon Oct 5, 26\n' > "$CS/Scripts/.dripfeed/showcase_names"
+mkmgl(){ printf '<mistergamedescription>\n\t<rbf>_Console/SNES</rbf>\n\t<file delay="2" type="f" index="0" path="%s"/>\n</mistergamedescription>\n' "$2" > "$1"; }
+mkmgl "$CS/_New Games - New Mon Oct 5, 26/SNES - Old Pick.mgl" "$CS/games/SNES/Old Pick.sfc"
+mkmgl "$CS/_New Games - Mine/Mine.mgl" "$CS/games/SNES/Mine.sfc"
+mkmgl "$CS/_@Favorites/_Dripfeed - New Mon Jan 5, 26/SNES - Old Pick.mgl" "$CS/games/SNES/Old Pick.sfc"
+mkmgl "$CS/_@Favorites/My Faves/Mine.mgl" "$CS/games/SNES/Mine.sfc"; mkmgl "$CS/_@Favorites/Top Pick.mgl" "$CS/games/SNES/Mine.sfc"
+sch "$CS" add SNES today "$CS/games/SNES/New Pick.sfc" >/dev/null 2>&1; eng "$CS" --auto >/dev/null 2>&1
+CUR="$(cat "$CS/Scripts/.dripfeed/showcase_name")"
+chk "a stale custom-prefix folder is consolidated into the one current folder" '[ "$CUR" != "_New Games - New Mon Oct 5, 26" ] && [ ! -d "$CS/_New Games - New Mon Oct 5, 26" ] && [ -f "$CS/$CUR/SNES - Old Pick.mgl" ] && [ -f "$CS/$CUR/SNES - New Pick.mgl" ]'
+chk "a user folder that shares the prefix is left alone" '[ -f "$CS/_New Games - Mine/Mine.mgl" ]'
+chk "every stamped folder name is recorded" 'grep -qxF "$CUR" "$CS/Scripts/.dripfeed/showcase_names" && grep -qxF "_New Games - New Mon Oct 5, 26" "$CS/Scripts/.dripfeed/showcase_names"'
+chk "Favorites mirror uses ONE stable subfolder (_@Favorites/_Dripfeed New)" '[ -f "$CS/_@Favorites/_Dripfeed New/SNES - New Pick.mgl" ] && [ "$(ls -d "$CS/_@Favorites"/*/ | wc -l | tr -d " ")" -eq 2 ]'
+chk "an older dated mirror folder of Dripfeed shortcuts is removed; user favorites stay" '[ ! -d "$CS/_@Favorites/_Dripfeed - New Mon Jan 5, 26" ] && [ -f "$CS/_@Favorites/My Faves/Mine.mgl" ] && [ -f "$CS/_@Favorites/Top Pick.mgl" ]'
+eng "$CS" --undrip >/dev/null 2>&1
+chk "Undrip removes exactly what Dripfeed created (user folders and favorites stay)" '[ ! -d "$CS/$CUR" ] && [ ! -d "$CS/_@Favorites/_Dripfeed New" ] && [ -f "$CS/_New Games - Mine/Mine.mgl" ] && [ -f "$CS/_@Favorites/My Faves/Mine.mgl" ] && [ -f "$CS/_@Favorites/Top Pick.mgl" ] && [ -f "$CS/games/SNES/New Pick.sfc" ]'
+
+KINDS="$(DRIPFEED_ROOT="$CS" bash -c '. "$DRIPFEED_ROOT/Scripts/.dripfeed/dripfeed-common.sh"; SHOWCASE_PREFIX="_@Fav"; for n in "_@Favorites" "_Game of the Month"; do df_showcase_kind "$n" && echo "$n"; done; SHOWCASE_PREFIX="_Game"; DF_SHOWCASE_PRE=""; df_showcase_kind "_Game of the Month - Aug" && echo gotm; SHOWCASE_PREFIX="_"; DF_SHOWCASE_PRE=""; df_showcase_kind "_Arcade" && echo arcade; true')"
+chk "an unusual prefix can never claim the Favorites root, a GOT'eM folder or every _ folder" '[ -z "$KINDS" ]'
+scratch MV; mkdir -p "$MV/src/Set" "$MV/dst"; echo keep > "$MV/dst/Taken.sfc"
+for mode in gnu posix; do echo "$mode" > "$MV/src/$mode.sfc"; echo new > "$MV/src/Taken-$mode.sfc"; mkdir -p "$MV/src/Set-$mode"; echo d > "$MV/src/Set-$mode/Disc 1.chd"; done
+MVRES="$(DRIPFEED_ROOT="$MV" bash -c '. "$0/dripfeed-common.sh"; for mode in gnu posix; do DF_MV_MODE=$mode
+  df_rename "$1/src/$mode.sfc" "$1/dst/$mode.sfc" && printf "file-ok "
+  df_rename "$1/src/Taken-$mode.sfc" "$1/dst/Taken.sfc" || printf "clobber-refused "
+  df_rename "$1/src/Set-$mode" "$1/dst/Set-$mode" && [ -f "$1/dst/Set-$mode/Disc 1.chd" ] && printf "dir-ok "
+done' "$SRC" "$MV")"
+chk "df_rename renames files and folders and never clobbers, with GNU and POSIX mv" '[ "$MVRES" = "file-ok clobber-refused dir-ok file-ok clobber-refused dir-ok " ] && [ "$(cat "$MV/dst/Taken.sfc")" = keep ] && [ -f "$MV/src/Taken-gnu.sfc" ] && [ -f "$MV/src/Taken-posix.sfc" ]'
+
+echo "== opt-in SYSTEM_SHORTCUTS: standard .mgl files inside games/<SYSTEM> =="
+newcard CN; mkdir -p "$CN/games/SNES" "$CN/games/GENESIS"
+chk "config template carries the new options with their defaults" 'grep -q "^SYSTEM_SHORTCUTS=0" "$CN/Scripts/.dripfeed/config.ini" && grep -q "^SYSTEM_SHORTCUTS_DIR=\"_Dripfeed New\"" "$CN/Scripts/.dripfeed/config.ini" && grep -q "^POST_REVEAL_CMD=\"\"" "$CN/Scripts/.dripfeed/config.ini" && grep -q "^TOUCH_ON_REVEAL=1" "$CN/Scripts/.dripfeed/config.ini" && [ "$(lib "$CN" "echo \"\$SYSTEM_SHORTCUTS|\$SYSTEM_SHORTCUTS_DIR|\$POST_REVEAL_CMD|\$TOUCH_ON_REVEAL\"")" = "0|_Dripfeed New||1" ]'
+printf 'SYSTEM_SHORTCUTS = 1\nSHOWCASE_KEEP=2\n' >> "$CN/Scripts/.dripfeed/config.ini"
+for g in "Alpha" "Bravo" "Charlie"; do echo "$g" > "$CN/games/SNES/$g.sfc"; sch "$CN" add SNES today "$CN/games/SNES/$g.sfc" >/dev/null 2>&1; done
+echo s > "$CN/games/GENESIS/Sonic Test.md"; sch "$CN" add GENESIS today "$CN/games/GENESIS/Sonic Test.md" >/dev/null 2>&1
+eng "$CN" --auto >/dev/null 2>&1
+SD="_Dripfeed New"
+chk "SYSTEM_SHORTCUTS=1: shortcut in games/<SYS>/_Dripfeed New, named without the system prefix" '[ -f "$CN/games/GENESIS/$SD/Sonic Test.mgl" ] && ! ls "$CN/games/GENESIS/$SD" "$CN/games/SNES/$SD" | grep -q " - " && grep -q "path=\"$CN/games/GENESIS/Sonic Test.md\"" "$CN/games/GENESIS/$SD/Sonic Test.mgl"'
+chk "each system shortcut folder keeps SHOWCASE_KEEP, with no gamelist.xml" '[ "$(ls "$CN/games/SNES/$SD" | wc -l | tr -d " ")" -eq 2 ] && [ ! -e "$CN/games/SNES/$SD/gamelist.xml" ]'
+printf '2099-01-01\tSNES\t_Dripfeed New\n' > "$CN/Scripts/.dripfeed/schedule-requests.tsv"; eng "$CN" --auto >/dev/null 2>&1
+NOUT="$(sch "$CN" add SNES 2099-01-01 "$CN/games/SNES/$SD" 2>&1)"
+chk "the shortcut folder is never scheduled (browser request or CLI)" '[ -d "$CN/games/SNES/$SD" ] && [ ! -e "$CN/.dripfeed-library/SNES/2099-01-01_$SD" ] && printf "%s\n" "$NOUT" | grep -q "shortcut folder"'
+sed_in_place 's/^SYSTEM_SHORTCUTS = 1$/SYSTEM_SHORTCUTS = 0/' "$CN/Scripts/.dripfeed/config.ini"
+eng "$CN" --auto >/dev/null 2>&1
+chk "switching SYSTEM_SHORTCUTS off removes the folders on the next run (games untouched)" '[ ! -d "$CN/games/SNES/$SD" ] && [ ! -d "$CN/games/GENESIS/$SD" ] && [ -f "$CN/games/SNES/Alpha.sfc" ] && [ -f "$CN/games/GENESIS/Sonic Test.md" ]'
+sed_in_place 's/^SYSTEM_SHORTCUTS = 0$/SYSTEM_SHORTCUTS = 1/' "$CN/Scripts/.dripfeed/config.ini"
+eng "$CN" --auto >/dev/null 2>&1
+SC_N="$(ls "$CN/$(cat "$CN/Scripts/.dripfeed/showcase_name")"/*.mgl | wc -l | tr -d ' ')"
+chk "switching it on again backfills from What's New" '[ "$(ls "$CN"/games/*/"$SD"/*.mgl 2>/dev/null | wc -l | tr -d " ")" -eq "$SC_N" ] && [ "$SC_N" -gt 0 ]'
+eng "$CN" --undrip >/dev/null 2>&1
+chk "Undrip removes the per-system shortcut folders" '[ -z "$(ls -d "$CN"/games/*/"$SD" 2>/dev/null)" ] && [ -f "$CN/games/SNES/Charlie.sfc" ]'
+
+echo "== POST_REVEAL_CMD: once per pass that revealed games, with a timeout =="
+newcard CQ; mkdir -p "$CQ/games/SNES" "$CQ/games/NES"
+printf "POST_REVEAL_CMD = 'echo \"#\$DRIPFEED_REVEALED_COUNT \$DRIPFEED_REVEALED_SYSTEMS\" >> \"%s/post.out\"'\n" "$CQ" >> "$CQ/Scripts/.dripfeed/config.ini"
+chk "a quoted command may contain # (it is not a comment there)" 'lib "$CQ" "printf %s \"\$POST_REVEAL_CMD\"" | grep -q "echo \"#"'
+eng "$CQ" --auto >/dev/null 2>&1
+chk "not run on a pass that revealed nothing" '[ ! -e "$CQ/post.out" ]'
+echo a > "$CQ/games/SNES/One.sfc"; echo b > "$CQ/games/NES/Two.nes"
+sch "$CQ" add SNES today "$CQ/games/SNES/One.sfc" >/dev/null 2>&1; sch "$CQ" add NES today "$CQ/games/NES/Two.nes" >/dev/null 2>&1
+eng "$CQ" --auto >/dev/null 2>&1
+chk "run exactly once at the end of a pass that revealed games; exit status logged" '[ "$(wc -l < "$CQ/post.out" | tr -d " ")" = 1 ] && grep -Eq "^#2 (NES SNES|SNES NES)$" "$CQ/post.out" && grep -q "POST_REVEAL_CMD exit status 0" "$CQ/Scripts/.dripfeed/dripfeed.log"'
+echo c > "$CQ/games/SNES/Three.sfc"; sch "$CQ" add SNES today "$CQ/games/SNES/Three.sfc" >/dev/null 2>&1
+DRIPFEED_ROOT="$CQ" sh "$CQ/linux/user-startup.sh" stop >/dev/null 2>&1; sleep 1
+chk "never run from the shutdown hook" '[ "$(wc -l < "$CQ/post.out" | tr -d " ")" = 1 ] && [ ! -e "$CQ/games/SNES/Three.sfc" ]'
+printf 'POST_REVEAL_CMD="sleep 5"\n' >> "$CQ/Scripts/.dripfeed/config.ini"
+DRIPFEED_POST_REVEAL_TIMEOUT=1 eng "$CQ" --auto >/dev/null 2>&1
+chk "a slow command is stopped by the timeout and logged" 'grep -q "POST_REVEAL_CMD timed out after 1s" "$CQ/Scripts/.dripfeed/dripfeed.log" && [ -f "$CQ/games/SNES/Three.sfc" ]'
+
+echo "== TOUCH_ON_REVEAL: the reveal time becomes the file date; contents unchanged =="
+newcard CT; mkdir -p "$CT/games/SNES" "$CT/games/PSX/Old Set"
+printf 'precious bytes\001\002\n' > "$CT/games/SNES/Old Stamp.sfc"; cp "$CT/games/SNES/Old Stamp.sfc" "$CT/reference.sfc"
+echo disc > "$CT/games/PSX/Old Set/Disc 1.chd"; printf 'Disc 1.chd\n' > "$CT/games/PSX/Old Set/Old Set.m3u"
+touch -t 200001010000 "$CT/games/SNES/Old Stamp.sfc" "$CT/games/PSX/Old Set/Disc 1.chd" "$CT/games/PSX/Old Set/Old Set.m3u" "$CT/games/PSX/Old Set"
+touch -t 200101010000 "$CT/marker-2001"
+sch "$CT" add SNES today "$CT/games/SNES/Old Stamp.sfc" >/dev/null 2>&1; sch "$CT" add PSX today "$CT/games/PSX/Old Set" >/dev/null 2>&1
+eng "$CT" --auto >/dev/null 2>&1
+chk "revealed file is dated at the reveal, byte-for-byte unchanged" '[ "$CT/games/SNES/Old Stamp.sfc" -nt "$CT/marker-2001" ] && cmp -s "$CT/games/SNES/Old Stamp.sfc" "$CT/reference.sfc"'
+chk "a revealed folder and its top-level files are dated at the reveal" '[ "$CT/games/PSX/Old Set" -nt "$CT/marker-2001" ] && [ "$CT/games/PSX/Old Set/Disc 1.chd" -nt "$CT/marker-2001" ] && [ "$CT/games/PSX/Old Set/Old Set.m3u" -nt "$CT/marker-2001" ]'
+printf 'TOUCH_ON_REVEAL=0\n' >> "$CT/Scripts/.dripfeed/config.ini"
+echo k > "$CT/games/SNES/Keep Stamp.sfc"; touch -t 200001010000 "$CT/games/SNES/Keep Stamp.sfc"
+sch "$CT" add SNES today "$CT/games/SNES/Keep Stamp.sfc" >/dev/null 2>&1; eng "$CT" --auto >/dev/null 2>&1
+chk "TOUCH_ON_REVEAL=0 keeps the original file date" '[ -f "$CT/games/SNES/Keep Stamp.sfc" ] && [ "$CT/marker-2001" -nt "$CT/games/SNES/Keep Stamp.sfc" ]'
+
+echo "== console summary: neutral hint for graphical frontends =="
+newcard CF; mkdir -p "$CF/games/SNES"; echo h > "$CF/games/SNES/Hint.sfc"
+sch "$CF" add SNES today "$CF/games/SNES/Hint.sfc" >/dev/null 2>&1
+HOUT="$(DRIPFEED_INTERACTIVE=1 eng "$CF" --reveal </dev/null 2>&1)"; HOUT2="$(DRIPFEED_INTERACTIVE=1 eng "$CF" --reveal </dev/null 2>&1)"
+chk "after a pass that revealed games the summary adds the frontend refresh hint (and not otherwise)" 'printf "%s\n" "$HOUT" | grep -qF "Using a graphical frontend with its own game library? Refresh its library to see the new games." && ! printf "%s\n" "$HOUT2" | grep -qF "Refresh its library"'
+
+echo "== review hardening: symlinks, bind mounts, user files, stuck commands =="
+# mv as MiSTer ships it (coreutils 8.32: no --no-copy), so only the guard can stop a copy.
+scratch MV832; printf '#!/bin/sh\nif [ "$1" = --help ]; then "%s" --help | grep -v -- --no-copy; exit 0; fi\nexec "%s" "$@"\n' "$(command -v mv)" "$(command -v mv)" > "$MV832/mv"; chmod +x "$MV832/mv"
+# A system folder that is a SYMLINK to another drive must be judged by where it
+# really lives (stat of the link itself reports the SD card, and mv would copy).
+XSYM=""
+if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+  XSYM="$(mktemp -d /dev/shm/dripfeed-sym.XXXXXX 2>/dev/null)"
+  if [ -n "$XSYM" ] && [ "$(stat -c %d "$XSYM/." 2>/dev/null)" = "$(stat -c %d "$ROOT/." 2>/dev/null)" ]; then rm -rf "$XSYM"; XSYM=""; fi
+fi
+if [ -n "$XSYM" ]; then
+  CARDS="$CARDS $XSYM"; newcard CY; ln -s "$XSYM" "$CY/games/SNES"
+  mkdir -p "$CY/.dripfeed-library/SNES"; echo sym > "$CY/.dripfeed-library/SNES/${TODAY}_Symlinked.sfc"
+  PATH="$MV832:$PATH" eng "$CY" --auto >/dev/null 2>&1
+  chk "a system folder symlinked to another drive is held (never copied through the link)" '[ -f "$CY/.dripfeed-library/SNES/${TODAY}_Symlinked.sfc" ] && [ ! -e "$XSYM/Symlinked.sfc" ] && grep -q "CROSS-DEVICE HOLD" "$CY/Scripts/.dripfeed/dripfeed.log"'
+  newcard CY2; mkdir -p "$CY2/real-SNES"; ln -s "$CY2/real-SNES" "$CY2/games/SNES"
+  mkdir -p "$CY2/.dripfeed-library/SNES"; echo same > "$CY2/.dripfeed-library/SNES/${TODAY}_Same Card Link.sfc"
+  INO_L="$(inode "$CY2/.dripfeed-library/SNES/${TODAY}_Same Card Link.sfc")"
+  PATH="$MV832:$PATH" eng "$CY2" --auto >/dev/null 2>&1
+  chk "a system folder symlinked within the same card still reveals by rename" '[ -f "$CY2/real-SNES/Same Card Link.sfc" ] && [ "$(inode "$CY2/real-SNES/Same Card Link.sfc")" = "$INO_L" ]'
+else
+  echo "  skip - no second filesystem for the symlink check"
+fi
+# Two mounts of the SAME filesystem (a bind mount): rename(2) fails there too and
+# mv would copy, so the move is held. Runs only where a private mount namespace
+# can be made (root on Linux); nothing leaks into the host's mounts.
+if command -v unshare >/dev/null 2>&1 && unshare -m true 2>/dev/null; then
+  newcard CBM; mkdir -p "$CBM/bind-src/SNES" "$CBM/games/SNES" "$CBM/.dripfeed-library/SNES"
+  echo bm > "$CBM/.dripfeed-library/SNES/${TODAY}_Bind Held.sfc"
+  echo in > "$CBM/bind-src/SNES/Inside.sfc"
+  PATH="$MV832:$PATH" unshare -m bash -c 'mount --bind "$1/bind-src/SNES" "$1/games/SNES" && DRIPFEED_ROOT="$1" bash "$1/Scripts/.dripfeed/dripfeed-engine.sh" --auto' _ "$CBM" >/dev/null 2>&1
+  chk "a bind-mounted system folder on the same drive is held (rename cannot cross mounts)" '[ -f "$CBM/.dripfeed-library/SNES/${TODAY}_Bind Held.sfc" ] && [ ! -e "$CBM/bind-src/SNES/Bind Held.sfc" ] && grep -q "CROSS-DEVICE HOLD" "$CBM/Scripts/.dripfeed/dripfeed.log"'
+  BOUT="$(PATH="$MV832:$PATH" unshare -m bash -c 'mount --bind "$1/bind-src/SNES" "$1/games/SNES" && DRIPFEED_ROOT="$1" bash "$1/Scripts/.dripfeed/dripfeed-schedule.sh" add SNES 2099-01-01 "$1/games/SNES/Inside.sfc"' _ "$CBM" 2>&1)"
+  chk "and scheduling out of a bind-mounted folder is held too (game untouched)" '[ -f "$CBM/bind-src/SNES/Inside.sfc" ] && [ ! -e "$CBM/.dripfeed-library/SNES/2099-01-01_Inside.sfc" ] && printf "%s\n" "$BOUT" | grep -q "different drive"'
+else
+  echo "  skip - cannot create a private mount namespace for the bind-mount check"
+fi
+# SYSTEM_SHORTCUTS_DIR naming a folder the user already has: only Dripfeed's own
+# shortcuts are ever pruned or removed, never the user's files.
+newcard CU; mkdir -p "$CU/games/SNES/Hacks"
+printf '<mistergamedescription><rbf>_Console/SNES</rbf><file delay="2" type="f" index="0" path="%s/games/SNES/Gone Hack.sfc"/></mistergamedescription>\n' "$CU" > "$CU/games/SNES/Hacks/Old Hack.mgl"
+printf '<mistergamedescription><rbf>_Console/SNES</rbf><file delay="2" type="f" index="0" path="%s/games/SNES/Hacks/My Hack.sfc"/></mistergamedescription>\n' "$CU" > "$CU/games/SNES/Hacks/My Hack.mgl"
+echo hack > "$CU/games/SNES/Hacks/My Hack.sfc"; echo '<gameList/>' > "$CU/games/SNES/Hacks/gamelist.xml"
+touch -t 200001010000 "$CU/games/SNES/Hacks/Old Hack.mgl" "$CU/games/SNES/Hacks/My Hack.mgl"
+printf 'SYSTEM_SHORTCUTS=1\nSYSTEM_SHORTCUTS_DIR="Hacks"\nSHOWCASE_KEEP=1\n' >> "$CU/Scripts/.dripfeed/config.ini"
+for g in "Uno" "Dos"; do echo "$g" > "$CU/games/SNES/$g.sfc"; sch "$CU" add SNES today "$CU/games/SNES/$g.sfc" >/dev/null 2>&1; done
+eng "$CU" --auto >/dev/null 2>&1
+chk "SYSTEM_SHORTCUTS pruning never touches the user's own files in that folder" '[ -f "$CU/games/SNES/Hacks/Old Hack.mgl" ] && [ -f "$CU/games/SNES/Hacks/My Hack.mgl" ] && [ -f "$CU/games/SNES/Hacks/gamelist.xml" ] && [ -f "$CU/games/SNES/Hacks/My Hack.sfc" ] && [ "$(ls "$CU/games/SNES/Hacks" | grep -c -e "^Uno.mgl$" -e "^Dos.mgl$")" = 1 ]'
+sed_in_place 's/^SYSTEM_SHORTCUTS=1$/SYSTEM_SHORTCUTS=0/' "$CU/Scripts/.dripfeed/config.ini"
+eng "$CU" --auto >/dev/null 2>&1
+chk "switching it off removes only Dripfeed's shortcuts; the user's folder and files stay" '[ -f "$CU/games/SNES/Hacks/Old Hack.mgl" ] && [ -f "$CU/games/SNES/Hacks/My Hack.mgl" ] && [ -f "$CU/games/SNES/Hacks/gamelist.xml" ] && [ ! -e "$CU/games/SNES/Hacks/Uno.mgl" ] && [ ! -e "$CU/games/SNES/Hacks/Dos.mgl" ]'
+sed_in_place 's/^SYSTEM_SHORTCUTS=0$/SYSTEM_SHORTCUTS=1/' "$CU/Scripts/.dripfeed/config.ini"
+eng "$CU" --auto >/dev/null 2>&1; eng "$CU" --undrip >/dev/null 2>&1
+chk "Undrip leaves the user's files in a shared shortcut folder name" '[ -f "$CU/games/SNES/Hacks/Old Hack.mgl" ] && [ -f "$CU/games/SNES/Hacks/My Hack.mgl" ] && [ -f "$CU/games/SNES/Hacks/gamelist.xml" ] && [ -z "$(ls "$CU/games/SNES/Hacks" | grep -e "^Uno.mgl$" -e "^Dos.mgl$")" ]'
+# A command that ignores TERM is killed, so it can never hang the pass.
+newcard CK; mkdir -p "$CK/games/SNES"; echo k > "$CK/games/SNES/Stuck.sfc"
+sch "$CK" add SNES today "$CK/games/SNES/Stuck.sfc" >/dev/null 2>&1
+printf "POST_REVEAL_CMD='trap \"\" TERM; sleep 60'\n" >> "$CK/Scripts/.dripfeed/config.ini"
+T0="$(date +%s)"; DRIPFEED_POST_REVEAL_TIMEOUT=1 eng "$CK" --auto >/dev/null 2>&1; T1="$(date +%s)"
+chk "a POST_REVEAL_CMD that ignores TERM is killed (the pass ends in seconds)" '[ $((T1 - T0)) -lt 20 ] && grep -q "POST_REVEAL_CMD timed out" "$CK/Scripts/.dripfeed/dripfeed.log" && [ -f "$CK/games/SNES/Stuck.sfc" ]'
+# Undrip only signals the boot watcher, never a process that reused its pid.
+if [ -r /proc/self/cmdline ] && [ -r /proc/sys/kernel/random/boot_id ]; then
+  newcard CV; sleep 30 & VPID=$!; KILLS="$KILLS $VPID"
+  printf '%s\n%s\n' "$VPID" "$(cat /proc/sys/kernel/random/boot_id)" > "$CV/Scripts/.dripfeed/watch.pid"
+  eng "$CV" --undrip >/dev/null 2>&1
+  chk "Undrip never kills an unrelated process that reused the watcher's pid" 'kill -0 "$VPID" 2>/dev/null'
+  kill "$VPID" 2>/dev/null; wait "$VPID" 2>/dev/null
+fi
+# A malformed browser request can never name a parent folder or a queue folder.
+newcard CR; mkdir -p "$CR/games/SNES/.dripfeed"; echo q > "$CR/games/SNES/.dripfeed/2099-01-01_Legacy.sfc"
+printf '2099-01-01\t..\tScripts\n2099-01-01\tSNES\t..\n2099-01-01\tSNES\t.dripfeed\n' > "$CR/Scripts/.dripfeed/schedule-requests.tsv"
+printf '..\tScripts\n' > "$CR/Scripts/.dripfeed/unschedule-requests.tsv"
+eng "$CR" --auto >/dev/null 2>&1
+chk "requests naming .. or the legacy queue folder are ignored (nothing moved)" '[ -f "$CR/Scripts/.dripfeed/dripfeed-engine.sh" ] && [ -d "$CR/games/SNES" ] && [ -z "$(ls -A "$CR/.dripfeed-library" 2>/dev/null | grep -v "^SNES$")" ] && [ -z "$(ls "$CR" | grep "^2099")" ] && [ -f "$CR/.dripfeed-library/SNES/2099-01-01_Legacy.sfc" ]'
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

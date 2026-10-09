@@ -63,6 +63,7 @@
   .hidden{display:none}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--accent);
     color:#06210f;font-weight:700;padding:14px 22px;border-radius:12px;box-shadow:0 8px 30px #0008;opacity:0;
+    max-width:min(92vw,720px);overflow-wrap:anywhere;
     transition:opacity .2s, transform .2s;pointer-events:none}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
   .toast.err{background:var(--bad);color:#2a0606}
@@ -119,8 +120,11 @@
         <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)">
           <input id="cfgGotmOn" type="checkbox" checked> build GOT'eM (Game of the Month) folder(s)
         </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)">
+          <input id="cfgSysShortcuts" type="checkbox"> also add What's New shortcuts inside each system folder
+        </label>
       </div>
-      <p class="sub" style="font-size:12px;margin:4px 0 0">Use either, both, or neither — scheduling and reveals work regardless; these only control the menu folders Dripfeed builds.</p>
+      <p class="sub" style="font-size:12px;margin:4px 0 0">Use either, both, or neither — scheduling and reveals work regardless; these only control the menu folders Dripfeed builds. The system-folder option (off by default) adds small <code>.mgl</code> shortcuts in <code>games/&lt;system&gt;/_Dripfeed New</code> for graphical frontends that build their own library from system folders; the games themselves never move there. Turning it off removes those folders on the next run.</p>
       <div class="row" style="margin-top:16px;align-items:flex-end;flex-wrap:wrap;gap:10px">
         <div style="flex:0 0 240px">
           <label>Dripfeed menu folder name</label>
@@ -140,7 +144,7 @@
             <input id="cfgGotmMonth" type="checkbox"> include month (<code>&nbsp;- Aug</code>)
           </label>
         </div>
-        <div style="flex:0 0 auto"><button id="cfgApply" class="ghost">Save folder names</button></div>
+        <div style="flex:0 0 auto"><button id="cfgApply" class="ghost">Save folder settings</button></div>
       </div>
       <p class="sub" id="cfgLimits" style="font-size:12px;margin:6px 0 0"></p>
       <p class="sub" style="font-size:12px;margin:8px 0 0">Names are cleaned automatically: emojis and characters MiSTer can't show are removed, a leading <code>_</code> is added if missing (folders need it to appear in the menu; <code>_@</code> pins to the top). With the date toggle ON the Dripfeed folder is named for the <b>latest Dripfeed</b> (e.g. <code>_Dripfeed - New Fri Jul 3, 26</code>) — it only ever renames when a game actually unlocks, never on a plain power-on, and never sits empty-dated. Toggle OFF for a fixed name. The MiSTer menu shows ~30 characters, so the length limits below adjust to leave room for whatever the toggles add.</p>
@@ -284,11 +288,15 @@
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div class="step" style="margin:0"><span class="num">★</span> Scheduled &amp; waiting</div>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button id="exportCsv" class="ghost">📄 Export CSV</button>
             <button id="exportIcs" class="ghost">📆 Export .ics</button>
+            <label style="display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer;color:var(--text)">
+              <input id="icsAlarm" type="checkbox"> Add a 9 AM alert on the day
+            </label>
           </div>
         </div>
+        <p class="hint">After changing dates, export the .ics again and import it: each game keeps the same calendar event, so a re-dated game moves instead of appearing twice.</p>
         <div id="queueList" style="margin-top:14px"></div>
       </div>
     </div>
@@ -314,8 +322,10 @@ let viewY, viewM;
 
 // ---------- helpers ----------
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let toastTimer=0;
 function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="toast show"+(err?" err":"");
-  setTimeout(()=>t.className="toast",err?3800:2200);}
+  // Errors that carry the browser's real reason are long; keep them up long enough to read.
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className="toast",err?Math.min(12000,Math.max(3800,String(msg).length*55)):2200);}
 function pad(n){return String(n).padStart(2,"0");}
 function iso(d){return d.y+"-"+pad(d.m+1)+"-"+pad(d.d);}
 function todayObj(){const n=new Date();return {y:n.getFullYear(),m:n.getMonth(),d:n.getDate()};}
@@ -338,40 +348,52 @@ function gotmStatePath(path){
 }
 
 // ---------- File System Access ----------
-// Moves prefer handle.move() — a true same-filesystem RENAME: the file's data is
-// never rewritten, so it is instant and cannot corrupt a ROM. The copy+delete
-// fallback (older browsers) is guarded by a FAILSAFE: the copy's byte size is
-// verified BEFORE the original is deleted, and a partial copy is removed on any
-// failure — a ROM can never be lost or left half-written.
+// Game data is NEVER copied by the browser. FileSystemFileHandle.move() is a
+// same-volume rename in Chromium (no hashing / Safe Browsing pass while the
+// extension is unchanged, which a YYYY-MM-DD_ prefix never changes). A stream
+// copy would instead write a same-size "<name>.crswap" beside the target, hash it
+// on close, need 2x free space, and leave a date-prefixed swap file behind if the
+// card is pulled. So: rename or refuse, and say why — never copy+delete.
+// Whole-card mode never calls moveFile/moveDir at all: every schedule, re-date
+// and return becomes a request-ledger row that the MiSTer engine applies with
+// its own same-filesystem mv. Limited mode (games folder only) shows the real
+// move() error and leaves the game exactly where it was.
+function moveRefused(name,e){
+  const why=(e&&e.name||"Error")+(e&&e.message?": "+e.message:"");
+  const fix=e&&e.name==="NotSupportedError"?"Use a current Chrome or Edge":"Close programs using the card (file preview, antivirus, indexer) and retry";
+  const err=new Error('"'+name+'" was not changed — the browser refused the rename ('+why+'). '+fix+', or connect the whole SD card so MiSTer moves it.');
+  err.name=e&&e.name||"Error"; err.cause=e; return err;
+}
+// A refusal that will repeat for every game (no move() in this browser, write
+// permission withdrawn) stops a limited-mode batch at the first game.
+function moveStopsBatch(e){return !!e&&["NotSupportedError","NotAllowedError","SecurityError"].includes(e.name);}
+async function entryExists(get){
+  try{await get();return true;}
+  catch(e){if(e&&(e.name==="NotFoundError"||e.name==="TypeMismatchError"))return false;throw e;}
+}
+async function assertFree(destDir,newName){
+  if(await entryExists(()=>destDir.getFileHandle(newName))||await entryExists(()=>destDir.getDirectoryHandle(newName)))
+    throw new Error("destination already exists: "+newName);
+}
 async function moveFile(srcDir,name,destDir,newName){
-  // Refuse both file and directory collisions before using move() or the
-  // copy fallback. A browser's {create:true} must never clobber a ROM.
-  try{await destDir.getFileHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
-  try{await destDir.getDirectoryHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
+  await assertFree(destDir,newName);       // never clobber a ROM or save
   const h=await srcDir.getFileHandle(name);
-  if(typeof h.move==="function"){try{await h.move(destDir,newName);return;}catch(e){}}
-  const f=await h.getFile();
-  try{
-    const dh=await destDir.getFileHandle(newName,{create:true});
-    const w=await dh.createWritable(); await f.stream().pipeTo(w);
-    const copied=await (await destDir.getFileHandle(newName)).getFile();
-    if(copied.size!==f.size) throw new Error("size mismatch after copy ("+copied.size+" vs "+f.size+")");
-  }catch(e){ try{await destDir.removeEntry(newName);}catch(_){ } throw e; }
-  await srcDir.removeEntry(name);
+  if(typeof h.move!=="function")throw moveRefused(name,{name:"NotSupportedError",message:"this browser has no FileSystemFileHandle.move()"});
+  try{await h.move(destDir,newName);}catch(e){throw moveRefused(name,e);}
 }
 // macOS scatters AppleDouble junk ("._foo", ".DS_Store") on FAT cards; it can be
 // unreadable/stale and MUST NOT abort a folder move, nor count toward verification.
 function isJunk(n){ return n.startsWith("._")||n===".DS_Store"; }
 async function moveDir(srcParent,name,destParent,newName){
-  try{await destParent.getDirectoryHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
-  try{await destParent.getFileHandle(newName); throw new Error("destination already exists: "+newName);}catch(e){if(e.message&&e.message.startsWith("destination already"))throw e;}
+  await assertFree(destParent,newName);
   const h=await srcParent.getDirectoryHandle(name);
   // Multi-disc folders must move as one filesystem rename. A recursive
   // browser copy can be interrupted halfway and leave two misleading folders;
   // refusing that fallback is safer than risking a playable-looking partial set.
   if(typeof h.move!=="function")throw new Error("This browser cannot safely move a multi-disc folder in limited mode. Reconnect the whole SD card so MiSTer can perform the atomic move.");
   try{await h.move(destParent,newName);}
-  catch(e){throw new Error("The multi-disc folder was not changed. Reconnect the whole SD card and try again ("+(e&&e.name||"move failed")+").");}
+  catch(e){const err=new Error("The multi-disc folder was not changed. Reconnect the whole SD card and try again ("+(e&&e.name||"move failed")+(e&&e.message?": "+e.message:"")+").");
+    err.name=e&&e.name||"Error";err.cause=e;throw err;}   // keep the name: connection loss and refusals are recognised
 }
 async function stageDirFor(sys){
   if(stageRoot)return await stageRoot.getDirectoryHandle(sys.name,{create:true});
@@ -401,29 +423,40 @@ async function readRevealLedger(){
   }catch(e){}
 }
 
-async function readOccasions(){
+// Read one state file. A missing file reads as empty. Display callers ignore
+// other errors; read-modify-write callers pass strict so an unreadable ledger is
+// never mistaken for an empty one (writing that back would wipe pending rows).
+async function readStateText(name,strict){
+  try{const fh=await stateDir.getFileHandle(name);return await(await fh.getFile()).text();}
+  catch(e){if(strict&&!(e&&e.name==="NotFoundError"))throw e;return "";}
+}
+async function readOccasions(strict){
   const map={};
-  try{const fh=await stateDir.getFileHandle("occasions.tsv");const t=await(await fh.getFile()).text();
-    t.split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
-  }catch(e){}
+  (await readStateText("occasions.tsv",strict)).split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
   return map;
 }
-async function writeOccasion(date,message){
-  const map=await readOccasions();
-  if(message&&message.trim())map[date]=message.trim(); else delete map[date];
-  const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
-  const fh=await stateDir.getFileHandle("occasions.tsv",{create:true});
-  const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+// changes: {date: message|""}; one read + one write for any number of dates.
+function writeOccasions(changes){
+  return withStateLock(async()=>{
+    const map=await readOccasions(true);
+    for(const [date,message] of Object.entries(changes)){if(message&&message.trim())map[date]=message.trim(); else delete map[date];}
+    const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
+    const fh=await stateDir.getFileHandle("occasions.tsv",{create:true});
+    const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+  });
 }
+const writeOccasion=(date,message)=>writeOccasions({[date]:message});
 function requestKey(sys,name){return sys+"\x1f"+name;}
-function requestSafe(value){return value&&!/[\t\r\n\\/]/.test(value);}
-async function readMoveRequests(file,withDate){
+// Mirrors the engine's df_request_fields_ok: no tab, CR, LF, slash, backslash or
+// unit separator (\x1f, the engine's internal field separator), and never . or ..
+function requestSafe(value){return !!value&&value!=="."&&value!==".."&&!/[\t\r\n\\/\x1f]/.test(value);}
+async function readMoveRequests(file,withDate,strict){
   const rows=[];
-  try{const fh=await stateDir.getFileHandle(file);const t=await(await fh.getFile()).text();
-    t.split(/\r?\n/).forEach(line=>{if(!line)return;const p=line.split("\t");
-      if(withDate&&p.length===3)rows.push({date:p[0],sys:p[1],name:p[2]});
-      if(!withDate&&p.length===2)rows.push({sys:p[0],name:p[1]});});
-  }catch(e){}
+  // Split exactly as the engine does (df_annotate_requests): outer tabs trimmed,
+  // runs of tabs are one separator; rows with any other field count are invalid.
+  (await readStateText(file,strict)).split(/\r?\n/).forEach(line=>{line=line.replace(/^\t+|\t+$/g,"");if(!line)return;const p=line.split(/\t+/);
+    if(withDate&&p.length===3)rows.push({date:p[0],sys:p[1],name:p[2]});
+    if(!withDate&&p.length===2)rows.push({sys:p[0],name:p[1]});});
   return rows;
 }
 async function writeMoveRequests(file,rows,withDate){
@@ -431,24 +464,44 @@ async function writeMoveRequests(file,rows,withDate){
   const fh=await stateDir.getFileHandle(file,{create:true});const w=await fh.createWritable();
   await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
 }
-async function requestSchedule(date,sys,name){
-  if(!stateIsConsole)throw new Error("whole SD card required for safe card-side move");
-  if(!requestSafe(sys)||!requestSafe(name))throw new Error("name contains an unsupported tab, slash, or newline");
-  const rows=(await readMoveRequests("schedule-requests.tsv",true)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
-  rows.push({date,sys,name});await writeMoveRequests("schedule-requests.tsv",rows,true);
-  const undo=(await readMoveRequests("unschedule-requests.tsv",false)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
-  await writeMoveRequests("unschedule-requests.tsv",undo,false);
+// Every read-modify-write of a state file goes through one queue, so two quick
+// clicks can never interleave and silently drop each other's rows.
+let stateLock=Promise.resolve();
+function withStateLock(fn){const run=stateLock.then(fn,fn);stateLock=run.then(()=>{},()=>{});return run;}
+// Pure merge of a batch into the two ledgers (exported to the Node tests).
+// Later entries win; a schedule cancels a pending return and vice versa;
+// `cancel` drops a pending schedule without requesting a return. Rows whose
+// system or name would break the TSV are returned in `rejected`, never written.
+function mergeMoveRequests(sOld,uOld,{schedule=[],unschedule=[],cancel=[]}){
+  const s=new Map(sOld.map(r=>[requestKey(r.sys,r.name),r])), u=new Map(uOld.map(r=>[requestKey(r.sys,r.name),r]));
+  const rejected=[], ok=r=>requestSafe(r.sys)&&requestSafe(r.name)&&(r.date===undefined||/^\d{4}-\d{2}-\d{2}$/.test(r.date));
+  for(const r of cancel){s.delete(requestKey(r.sys,r.name));}
+  for(const r of schedule){if(!ok(r)){rejected.push(r);continue;}const k=requestKey(r.sys,r.name);s.delete(k);u.delete(k);s.set(k,{date:r.date,sys:r.sys,name:r.name});}
+  for(const r of unschedule){if(!ok(r)){rejected.push(r);continue;}const k=requestKey(r.sys,r.name);s.delete(k);u.delete(k);u.set(k,{sys:r.sys,name:r.name});}
+  const same=(a,b)=>a.length===b.length&&a.every((r,i)=>JSON.stringify(r)===JSON.stringify(b[i]));
+  const sNew=[...s.values()], uNew=[...u.values()];
+  return {schedule:sNew,unschedule:uNew,scheduleChanged:!same(sOld,sNew),unscheduleChanged:!same(uOld,uNew),rejected};
 }
-async function cancelScheduleRequest(sys,name){
-  const rows=(await readMoveRequests("schedule-requests.tsv",true)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
-  await writeMoveRequests("schedule-requests.tsv",rows,true);
+// One read + at most one write per ledger for a whole batch. (Per-game rewrites
+// cost 2 swap-file writes per game: 5,000 games = 10,000 writes, ~690 MiB, for a
+// 283 KiB ledger.) Resolves to {rejected:[rows not written]}.
+function applyMoveRequests(batch){
+  return withStateLock(async()=>{
+    if(!stateIsConsole)throw new Error("whole SD card required for safe card-side move");
+    const sOld=await readMoveRequests("schedule-requests.tsv",true,true), uOld=await readMoveRequests("unschedule-requests.tsv",false,true);
+    const m=mergeMoveRequests(sOld,uOld,batch);
+    if(m.scheduleChanged)await writeMoveRequests("schedule-requests.tsv",m.schedule,true);
+    if(m.unscheduleChanged)await writeMoveRequests("unschedule-requests.tsv",m.unschedule,false);
+    return {rejected:m.rejected};
+  });
 }
-async function requestUnschedule(sys,name){
-  if(!stateIsConsole)throw new Error("whole SD card required for safe card-side move");
-  await cancelScheduleRequest(sys,name);
-  const rows=(await readMoveRequests("unschedule-requests.tsv",false)).filter(r=>requestKey(r.sys,r.name)!==requestKey(sys,name));
-  rows.push({sys,name});await writeMoveRequests("unschedule-requests.tsv",rows,false);
+async function applyOneRequest(batch){
+  const {rejected}=await applyMoveRequests(batch);
+  if(rejected.length)throw new Error("name contains an unsupported tab, slash, or newline: "+rejected[0].name);
 }
+const requestSchedule=(date,sys,name)=>applyOneRequest({schedule:[{date,sys,name}]});
+const cancelScheduleRequest=(sys,name)=>applyOneRequest({cancel:[{sys,name}]});
+const requestUnschedule=(sys,name)=>applyOneRequest({unschedule:[{sys,name}]});
 
 // ---------- connection-loss recovery (step-by-step reconnect) ----------
 // Folder handles go stale when the SD card is ejected, the folder is moved/renamed,
@@ -576,10 +629,18 @@ const FIRMWARE_DIR_NAMES=new Set(["bios","firmware","firmwares","usa","japan","e
 const SYSFILE_NAMES=new Set(["gamelist.xml","n64-database.txt","sbi.zip","000-lo.lo","sfix.sfix",
   "uni-bios.rom","cd_bios.rom","bsx_bios.rom","neo-epo.sp1","sp-s2.sp1","eeprom.jce",
   "memorytrack.jmc","romsets.xml","gog-romsets.xml","gog-broken-romsets.xml"]);
+// Includes the large computer images (hard-disk .hdf/.hdi/.hdd/.hdv, Atari ST
+// .st/.msa/.stx, Apple II .po/.do/.2mg/.woz/.nib, Atari 8-bit .atr/.atx/.xex/.car)
+// and the handheld/console formats that otherwise made a game folder look like
+// a "non-game folder". The firmware guards below still run first.
 const GAME_EXTS=new Set([".adf",".a26",".bin",".cdi",".chd",".cue",".crt",".d64",".d81",
   ".dsk",".gb",".gba",".gbc",".gen",".img",".iso",".j64",".jag",".m3u",".md",
   ".mdf",".mra",".nes",".pce",".pbp",".prg",".rom",".sfc",".smc",".sms",".sna",".tap",
-  ".t64",".tzx",".v64",".vfd",".vhd",".z80",".zip",".7z"]);
+  ".t64",".tzx",".v64",".vfd",".vhd",".z80",".zip",".7z",
+  ".hdf",".hdi",".hdd",".hdv",".st",".msa",".stx",".neo",".gg",".sg",".sgx",".sgb",
+  ".lnx",".a78",".a52",".col",".int",".ws",".wsc",".ngp",".ngc",".32x",".vec",
+  ".atr",".atx",".xex",".xfd",".car",".nib",".woz",".po",".do",".2mg",".cas",".trd",
+  ".scl",".fds",".n64",".z64",".vb",".g64",".d71",".fdi",".ima"]);
 function isFirmwareOrSupportFile(name){
   const n=String(name||"").toLowerCase();
   if(SYSFILE_NAMES.has(n)||n.endsWith(".mrq"))return true; // Jaguar marquee support, not a ROM
@@ -592,32 +653,46 @@ function isPlayableFile(name){
   const n=String(name||"").toLowerCase(), dot=n.lastIndexOf(".");
   return dot>0&&GAME_EXTS.has(n.slice(dot))&&!isFirmwareOrSupportFile(n);
 }
+// Dripfeed's own per-system shortcut folder (SYSTEM_SHORTCUTS, default
+// "_Dripfeed New") is generated output, never a game: neither scheduler may
+// queue it. Matched without case, as the engine's df_is_shortcut_dir does.
+let SYS_SHORTCUTS_DIR="_Dripfeed New";
+function isShortcutDir(name){const n=String(name||"").toLowerCase();return n==="_dripfeed new"||n===SYS_SHORTCUTS_DIR.toLowerCase();}
 function isSystemFile(name,kind){
   const n=name.toLowerCase();
-  if(kind==="directory") return SYSFILE_DIRS.has(n);
+  if(kind==="directory") return SYSFILE_DIRS.has(n)||isShortcutDir(n);
   return isFirmwareOrSupportFile(n);
 }
-async function inspectFolder(handle,depth=4){
+const INSPECT_BUDGET=2000;   // entries examined per top-level folder, at most
+async function inspectFolder(handle,depth=4,budget={left:INSPECT_BUDGET}){
   // A folder is a game only when it contains a known playable image. A folder
   // containing only BIOS/firmware/support files is never schedulable.
+  // The first playable image decides the answer, so stop there; look at this
+  // level's files before descending, and cap the walk so a computer-core data
+  // tree cannot turn one listing into tens of thousands of handle creations.
   let hasEntries=false,playable=false,onlySupport=true,unreadable=false;
+  const subdirs=[];
   try{
     for await(const [name,h] of handle.entries()){
       if(name.startsWith("."))continue;
       hasEntries=true;
+      if(--budget.left<0){onlySupport=false;break;}
       if(h.kind==="file"){
-        if(isPlayableFile(name))playable=true;
-        else if(!isFirmwareOrSupportFile(name))onlySupport=false;
-      }else if(depth>0){
-        const child=await inspectFolder(h,depth-1);
-        if(child.playable)playable=true;
-        if(!child.onlySupport)onlySupport=false;
-      }else onlySupport=false;
+        if(isPlayableFile(name)){playable=true;break;}
+        if(!isFirmwareOrSupportFile(name))onlySupport=false;
+      }else if(depth>0)subdirs.push(h);
+      else onlySupport=false;
+    }
+    for(const h of playable?[]:subdirs){
+      const child=await inspectFolder(h,depth-1,budget);
+      if(child.playable){playable=true;break;}
+      if(!child.onlySupport)onlySupport=false;
     }
   }catch(e){unreadable=true;onlySupport=false;}
   return {hasEntries,playable,onlySupport,unreadable};
 }
 async function classifyEntry(name,handle){
+  if(handle.kind==="directory"&&isShortcutDir(name))return {sysfile:true,reason:"Dripfeed shortcut folder"};
   if(isSystemFile(name,handle.kind))return {sysfile:true,reason:"firmware/support file"};
   if(handle.kind!=="directory")return {sysfile:false,reason:""};
   const summary=await inspectFolder(handle),lower=name.toLowerCase();
@@ -625,19 +700,32 @@ async function classifyEntry(name,handle){
   if(!summary.playable)return {sysfile:true,reason:summary.onlySupport?"firmware/support folder":"non-game folder"};
   return {sysfile:false,reason:""};
 }
-async function loadGames(sysName){
-  currentGames=[];
-  const sys=systems.find(s=>s.name===sysName);if(!sys)return;
+// Scan one system into a NEW array. Never push into the shared currentGames: a
+// slow scan that is superseded (system switched, Select all systems) would
+// otherwise mix two systems' games under one system name.
+async function scanSystem(sysName,onProgress){
+  const sys=systems.find(s=>s.name===sysName);if(!sys)return [];
+  const list=[];let n=0;
   for await(const [name,h] of sys.handle.entries()){
     if(name.startsWith("."))continue;   // skip .dripfeed, .dripfeed_state, .DS_Store, etc.
     const info=await classifyEntry(name,h);
-    currentGames.push({name,handle:h,kind:h.kind,sysfile:info.sysfile,systemReason:info.reason,revealed:revealedKeys.has(keyOf(sysName,name))});
+    list.push({name,handle:h,kind:h.kind,sysfile:info.sysfile,systemReason:info.reason,revealed:revealedKeys.has(keyOf(sysName,name))});
+    if(onProgress&&++n%250===0)onProgress(n);
   }
-  currentGames.sort((a,b)=>a.name.localeCompare(b.name));
+  return list.sort((a,b)=>a.name.localeCompare(b.name));
+}
+let loadSeq=0, currentSys="";
+async function loadGames(sysName){
+  const seq=++loadSeq;
+  $("#gameList").innerHTML='<div class="game"><label id="loadProgress" style="color:var(--dim)"></label></div>';
+  $("#loadProgress").textContent="Reading "+sysName+"…";
+  const list=await scanSystem(sysName,n=>{const el=seq===loadSeq&&$("#loadProgress");if(el)el.textContent="Reading "+sysName+"… "+n+" entries";});
+  if(seq!==loadSeq)return;            // superseded by a newer load
+  currentGames=list;currentSys=sysName;
   renderGames();
 }
 function renderGames(){
-  const sys=$("#systemSel").value;
+  const sys=currentSys||$("#systemSel").value;
   const q=$("#search").value.toLowerCase();
   const list=$("#gameList");list.innerHTML="";
   const matches=currentGames.filter(g=>g.name.toLowerCase().includes(q));
@@ -651,37 +739,60 @@ function renderGames(){
     t.onclick=()=>{showSysFiles=!showSysFiles;renderGames();};
     list.appendChild(t);
   }
-  shown.forEach(g=>{
+  // Render at most gamesLimit rows (a 20,000-entry folder no longer builds 20,000
+  // rows per keystroke). One delegated listener handles every checkbox.
+  const frag=document.createDocumentFragment();
+  shown.slice(0,gamesLimit).forEach((g,i)=>{
     const row=document.createElement("div");row.className="game";
-    const id="g_"+btoa(unescape(encodeURIComponent(g.name))).replace(/=/g,"");
-    const k=keyOf(sys,g.name);
-    const protectedGame=g.revealed&&!allowRehide;
-    row.innerHTML=`<input type="checkbox" id="${id}" ${basket.has(k)?"checked":""} ${protectedGame?"disabled":""}>
-      <label for="${id}">${g.name.replace(/</g,"&lt;")}</label>
+    const k=keyOf(sys,g.name), protectedGame=g.revealed&&!allowRehide;
+    row.innerHTML=`<input type="checkbox" id="g_${i}" data-name="${g.name.replace(/&/g,"&amp;").replace(/"/g,"&quot;")}" ${basket.has(k)?"checked":""} ${protectedGame?"disabled":""}>
+      <label for="g_${i}">${g.name.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</label>
       ${g.kind==="directory"?'<span class="tag">multi-disc</span>':""}
       <span class="tag ${g.revealed?"revealed":"available"}">${g.revealed?"unveiled":"available"}</span>`;
-    row.querySelector("input").onchange=e=>{e.target.checked?basket.set(k,{sys,name:g.name,kind:g.kind}):basket.delete(k);updateSel();};
-    list.appendChild(row);
+    frag.appendChild(row);
   });
+  if(shown.length>gamesLimit){
+    const more=document.createElement("div");more.className="game";
+    more.innerHTML=`<button type="button" class="ghost">Show ${Math.min(1000,shown.length-gamesLimit)} more (${shown.length-gamesLimit} not shown — type to search)</button>`;
+    more.querySelector("button").onclick=()=>{gamesLimit+=1000;renderGames();};
+    frag.appendChild(more);
+  }
+  list.appendChild(frag);
   updateSel();
 }
+let gamesLimit=500;
+$("#gameList").addEventListener("change",e=>{
+  const t=e.target;if(!t.matches('input[type=checkbox][data-name]'))return;
+  const g=currentGames.find(x=>x.name===t.dataset.name);if(!g)return;
+  const sys=currentSys,k=keyOf(sys,g.name);
+  t.checked?basket.set(k,{sys,name:g.name,kind:g.kind}):basket.delete(k);updateSel();
+});
 function updateSel(){
   const sysSet=new Set([...basket.values()].map(i=>i.sys));
   $("#selCount").textContent=basket.size+" selected"+(sysSet.size>1?" · "+sysSet.size+" systems":"");
   updatePlan();
 }
-$("#systemSel").onchange=e=>loadGames(e.target.value);
-$("#search").oninput=renderGames;
-$("#selAll").onclick=()=>{const sys=$("#systemSel").value;const q=$("#search").value.toLowerCase();
+$("#systemSel").onchange=e=>{gamesLimit=500;loadGames(e.target.value);};
+let searchTimer=0;
+$("#search").oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{gamesLimit=500;renderGames();},150);};
+$("#selAll").onclick=()=>{const sys=currentSys;const q=$("#search").value.toLowerCase();
   // Only select what is actually SHOWN — never system files or unveiled games
   // unless the explicit override is enabled.
   currentGames.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide))
     .forEach(g=>basket.set(keyOf(sys,g.name),{sys,name:g.name,kind:g.kind}));renderGames();};
-$("#selAllSystems").onclick=async()=>{const old=$("#systemSel").value,q=$("#search").value.toLowerCase();
-  for(const s of systems){await loadGames(s.name);currentGames.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide))
-    .forEach(g=>basket.set(keyOf(s.name,g.name),{sys:s.name,name:g.name,kind:g.kind}));}
-  await loadGames(old);toast("Selected eligible games across all systems.");};
-$("#selInvert").onclick=()=>{const sys=$("#systemSel").value,q=$("#search").value.toLowerCase();
+$("#selAllSystems").onclick=async()=>{
+  const btn=$("#selAllSystems"),q=$("#search").value.toLowerCase();if(btn.disabled)return;
+  btn.disabled=true;let added=0;
+  try{
+    for(let i=0;i<systems.length;i++){const s=systems[i];
+      btn.textContent=`Scanning ${i+1}/${systems.length}: ${s.name}…`;
+      const list=s.name===currentSys?currentGames:await scanSystem(s.name);
+      list.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide))
+        .forEach(g=>{basket.set(keyOf(s.name,g.name),{sys:s.name,name:g.name,kind:g.kind});added++;});
+    }
+  }finally{btn.disabled=false;btn.textContent="Select all systems";}
+  renderGames();toast("Selected "+added+" eligible games across "+systems.length+" systems.");};
+$("#selInvert").onclick=()=>{const sys=currentSys,q=$("#search").value.toLowerCase();
   currentGames.filter(g=>g.name.toLowerCase().includes(q)&&!g.sysfile&&(!g.revealed||allowRehide)).forEach(g=>{
     const k=keyOf(sys,g.name);basket.has(k)?basket.delete(k):basket.set(k,{sys,name:g.name,kind:g.kind});});renderGames();};
 $("#selNone").onclick=()=>{basket.clear();renderGames();};
@@ -738,25 +849,45 @@ $("#scheduleBtn").onclick=async()=>{
   // With the whole card selected, write card-side move requests. MiSTer applies
   // them with atomic mv; browsers cannot atomically move mounted-card folders.
   const groups={};[...basket.values()].forEach(i=>{(groups[i.sys]=groups[i.sys]||[]).push(i);});
-  let done=0,fail=0,lastErr=null,blocked=0;
-  for(const sysName of Object.keys(groups)){
+  let done=0,fail=0,lastErr=null,blocked=0,n=0,stopped=0;const batch=[],total=basket.size;
+  bySystem: for(const sysName of Object.keys(groups)){
     const sys=systems.find(s=>s.name===sysName);
     if(!sys){fail+=groups[sysName].length;continue;}
-    const stage=stateIsConsole?null:await stageDirFor(sys);
+    let stage=null;
+    if(!stateIsConsole){
+      // Creating the waiting folder can be refused (permission withdrawn, card
+      // pulled); count the system's games as failed instead of leaving the
+      // button stuck on "Scheduling…".
+      try{stage=await stageDirFor(sys);}
+      catch(e){console.error(e);lastErr=e;fail+=groups[sysName].length;
+        if(moveStopsBatch(e)){stopped=total-blocked-done-fail;break bySystem;}continue;}
+    }
     for(const item of groups[sysName]){
       // HARD GUARD: system files (BIOS, boot ROMs, media/ art, palettes, …) are never
       // schedulable — hiding them breaks cores and artwork, not gameplay pacing.
       if(item.sysfile||isSystemFile(item.name,item.kind)|| (revealedKeys.has(keyOf(sysName,item.name))&&!allowRehide)){
         blocked++;basket.delete(keyOf(sysName,item.name));continue;
       }
+      if(stateIsConsole){
+        const name=stripPrefix(item.name);
+        if(!requestSafe(sysName)||!requestSafe(name)){fail++;lastErr=new Error("name contains an unsupported tab, slash, or newline: "+name);continue;}
+        batch.push({date,sys:sysName,name});continue;
+      }
       const newName=date+"_"+stripPrefix(item.name);
       try{
-        if(stateIsConsole)await requestSchedule(date,sysName,stripPrefix(item.name));
-        else if(item.kind==="file")await moveFile(sys.handle,item.name,stage,newName);
+        if(item.kind==="file")await moveFile(sys.handle,item.name,stage,newName);
         else await moveDir(sys.handle,item.name,stage,newName);
         done++;
-      }catch(e){console.error(e);lastErr=e;fail++;}
+      }catch(e){console.error(e);lastErr=e;fail++;
+        // Nothing was copied. If the refusal will repeat for every game, stop here.
+        if(moveStopsBatch(e)){stopped=total-blocked-done-fail;break bySystem;}}
+      if(++n%25===0){btn.textContent=`Scheduling… ${n}/${total}`;await new Promise(r=>setTimeout(r));}
     }
+  }
+  if(batch.length){
+    try{const {rejected}=await applyMoveRequests({schedule:batch});done+=batch.length-rejected.length;
+      if(rejected.length){fail+=rejected.length;lastErr=new Error("name contains an unsupported tab, slash, or newline: "+rejected[0].name);}}
+    catch(e){console.error(e);lastErr=e;fail+=batch.length;}
   }
   // FAILSAFE: a blank message field never clears a banner already set for this date
   // (use the ✕ next to the banner in the Queue tab to clear one deliberately), and
@@ -767,8 +898,7 @@ $("#scheduleBtn").onclick=async()=>{
   $("#message").value="";
   basket.clear();
   await loadGames($("#systemSel").value);
-  await refreshQueue();
-  toast(`${stateIsConsole?"Prepared":"Scheduled"} ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed)":""}${blocked?" ("+blocked+" system file(s) skipped)":""} for ${fmtLong(selDate)}${stateIsConsole?" — run Dripfeed once on MiSTer to move them safely":""}`,fail>0);
+  toast(`${stateIsConsole?"Prepared":"Scheduled"} ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed"+(lastErr?": "+lastErr.message:"")+")":""}${stopped?" ("+stopped+" not attempted)":""}${blocked?" ("+blocked+" system file(s) skipped)":""} for ${fmtLong(selDate)}${stateIsConsole?" — run Dripfeed once on MiSTer to move them safely":""}`,fail>0);
   if(fail&&isConnError(lastErr))guideReconnect("Some games couldn't be moved — the folder connection looks stale");
   // Jump to the queue so the applied or pending result is visible.
   showTab("queue");
@@ -780,7 +910,7 @@ async function getQueueItems(){
   for(const s of systems){
     for(const stage of await stageDirsFor(s)){
       for await(const [name,h] of stage.entries()){
-        if(!DATE_RE.test(name))continue;
+        if(!DATE_RE.test(name)||/\.crswap$/i.test(name)||isJunk(name))continue;   // browser swap files / macOS sidecars are never games
         const incomplete=h.kind==="directory"&&await h.getFileHandle(".dripfeed-incomplete").then(()=>true).catch(()=>false);
         items.push({date:name.slice(0,10),sys:s.name,clean:name.slice(11),raw:name,sysHandle:s.handle,stageHandle:stage,incomplete});
       }
@@ -819,11 +949,15 @@ async function redateItem(it,date){
   if(entry==="file")await moveFile(stage,it.raw,stage,newName);
   else await moveDir(stage,it.raw,stage,newName);
 }
+let queueSeq=0;
 async function refreshQueue(){
+  const seq=++queueSeq;           // a newer refresh supersedes this one (no doubled rows)
   await readRevealLedger();
   let items=await getQueueItems();
-  $("#queueCount").textContent=items.length;
   const occ=await readOccasions();
+  let gotm={};try{gotm=await readGotm();}catch(e){}
+  if(seq!==queueSeq)return;
+  $("#queueCount").textContent=items.length;
   const box=$("#queueList");box.innerHTML="";
   if(!items.length){box.innerHTML='<p class="sub">Nothing scheduled yet.</p>';return;}
   const note=document.createElement("p");note.className="sub";note.style.margin="0 0 10px";
@@ -843,7 +977,7 @@ async function refreshQueue(){
   bar.append(sysSel,sortSel,unBtn,rdBtn,rdDate);box.appendChild(bar);
   // ---- GOT'eM track (its own schedule: one pick per month, independent of the drip) ----
   try{
-    const g=await readGotm(); const months=Object.keys(g).sort();
+    const g=gotm; const months=Object.keys(g).sort();
     if(months.length){
       const h=document.createElement("p");h.className="sub";h.style.margin="6px 0 4px";
       h.innerHTML="<b>🏆 GOT'eM track</b> — monthly picks (managed here or on the GOT'eM tab):";
@@ -862,9 +996,16 @@ async function refreshQueue(){
   if(qSortBy==="sys")items.sort((a,b)=>a.sys.localeCompare(b.sys)||a.date.localeCompare(b.date));
   unBtn.onclick=async()=>{
     if(!confirm(`Unschedule ${items.length} game(s)?${stateIsConsole?" The safe return finishes next time Dripfeed runs on MiSTer.":" They become visible immediately."}`))return;
-    let n=0,bad=0,err=null;
-    for(const it of items){try{await unstageItem(it);n++;}catch(e){console.error(e);bad++;err=e;}}
-    toast(`Unscheduled ${n} game(s)`+(bad?` — ${bad} failed (${err&&err.name||"error"})`:"")+".",bad>0);
+    let n=0,bad=0,err=null,stopped=0;unBtn.disabled=true;
+    if(stateIsConsole){
+      // One batch: one read and at most one write per ledger, however many games.
+      const cancel=items.filter(it=>it.movePending&&!it.stageHandle).map(it=>({sys:it.sys,name:it.clean}));
+      const unschedule=items.filter(it=>!(it.movePending&&!it.stageHandle)).map(it=>({sys:it.sys,name:it.clean}));
+      try{const {rejected}=await applyMoveRequests({cancel,unschedule});n=items.length-rejected.length;bad=rejected.length;
+        if(bad)err=new Error("name contains an unsupported tab, slash, or newline: "+rejected[0].name);}
+      catch(e){console.error(e);bad=items.length;err=e;}
+    } else for(let i=0;i<items.length;i++){try{await unstageItem(items[i]);n++;}catch(e){console.error(e);bad++;err=e;if(moveStopsBatch(e)){stopped=items.length-i-1;break;}}}
+    toast(`Unscheduled ${n} game(s)`+(bad?` — ${bad} failed (${err&&err.message||err&&err.name||"error"})`:"")+(stopped?` — ${stopped} not attempted`:"")+".",bad>0);
     if(bad&&isConnError(err)&&!(await connAlive()))guideReconnect("Some games couldn't be unscheduled — the folder connection looks stale");
     await refreshQueue();if(systems.length)await loadGames($("#systemSel").value);
   };
@@ -872,9 +1013,14 @@ async function refreshQueue(){
     const d=rdDate.value;
     if(!d){toast("Pick a date first (box to the right).",true);return;}
     if(!confirm(`Move ${items.length} shown game(s) to ${d}?`))return;
-    let n=0,bad=0,err=null;
-    for(const it of items){try{await redateItem(it,d);n++;}catch(e){console.error(e);bad++;err=e;}}
-    toast(`Re-dated ${n} game(s) to ${d}`+(bad?` — ${bad} failed (${err&&err.name||"error"})`:"")+".",bad>0);
+    let n=0,bad=0,err=null,stopped=0;rdBtn.disabled=true;
+    if(stateIsConsole){
+      try{const {rejected}=await applyMoveRequests({schedule:items.map(it=>({date:d,sys:it.sys,name:it.clean}))});n=items.length-rejected.length;bad=rejected.length;
+        if(bad)err=new Error("name contains an unsupported tab, slash, or newline: "+rejected[0].name);}
+      catch(e){console.error(e);bad=items.length;err=e;}
+    }
+    else for(let i=0;i<items.length;i++){try{await redateItem(items[i],d);n++;}catch(e){console.error(e);bad++;err=e;if(moveStopsBatch(e)){stopped=items.length-i-1;break;}}}
+    toast(`Re-dated ${n} game(s) to ${d}`+(bad?` — ${bad} failed (${err&&err.message||err&&err.name||"error"})`:"")+(stopped?` — ${stopped} not attempted`:"")+".",bad>0);
     await refreshQueue();
   };
   const tNum=dToNum(todayObj());let lastDate="";
@@ -901,7 +1047,7 @@ async function refreshQueue(){
         if($("#systemSel").value===it.sys)await loadGames(it.sys);
       }catch(e){console.error(e);
         if(isConnError(e)&&!(await connAlive()))guideReconnect("Couldn't reach that game — the folder connection looks stale");
-        else toast("Couldn't unschedule ("+(e&&e.name||"error")+") — see the browser console for details.",true);}
+        else toast("Couldn't unschedule: "+(e&&e.message||e&&e.name||"error"),true);}
     };
     row.appendChild(btn);box.appendChild(row);
   }
@@ -910,20 +1056,21 @@ async function refreshQueue(){
 // ---------- Game of the Month ----------
 // Engine contract: Scripts/.dripfeed/gotm.tsv, lines "YYYY-MM<TAB>path-rel-to-/media/fat"
 // (games/SYS/file, games/SYS/folder, or _Arcade/file.mra). One pick per month.
-async function readGotm(){
+async function readGotm(strict){
   const map={};
-  try{const fh=await stateDir.getFileHandle("gotm.tsv");const t=await(await fh.getFile()).text();
-    t.split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
-  }catch(e){}
+  (await readStateText("gotm.tsv",strict)).split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
   return map;
 }
-async function writeGotm(month,path){
-  const map=await readGotm();
-  if(path)map[month]=path; else delete map[month];
-  const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
-  const fh=await stateDir.getFileHandle("gotm.tsv",{create:true});
-  const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+function writeGotms(changes){   // {month: path|null}
+  return withStateLock(async()=>{
+    const map=await readGotm(true);
+    for(const [month,path] of Object.entries(changes)){if(path)map[month]=path; else delete map[month];}
+    const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
+    const fh=await stateDir.getFileHandle("gotm.tsv",{create:true});
+    const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
+  });
 }
+const writeGotm=(month,path)=>writeGotms({[month]:path});
 let gotmEntries=[]; // {label, relpath}
 async function gotmLoadSys(){
   const sel=$("#gotmSys"); if(!sel) return;
@@ -945,13 +1092,13 @@ async function gotmLoadGames(){
     const sysName=v.slice(4); const sys=systems.find(s=>s.name===sysName);
     if(sys){
       for await(const [n,h] of sys.handle.entries()){
-        if(n.startsWith(".")||n==="media"||n==="gamelist.xml"||n.startsWith("boot")||n.startsWith("mister-")) continue;
+        if(n.startsWith(".")||n==="media"||n==="gamelist.xml"||n.startsWith("boot")||n.startsWith("mister-")||(h.kind==="directory"&&isShortcutDir(n))) continue;
         gotmEntries.push({label:n,relpath:"games/"+sysName+"/"+n});
       }
       // scheduled (hidden) games are valid picks too — engine waits for the reveal
       for(const stage of await stageDirsFor(sys)){
         for await(const [n] of stage.entries()){
-          if(DATE_RE.test(n)) gotmEntries.push({label:"⏳ "+n.slice(11)+"  (scheduled "+n.slice(0,10)+")",relpath:"games/"+sysName+"/"+n.slice(11)});
+          if(DATE_RE.test(n)&&!/\.crswap$/i.test(n)&&!isJunk(n)) gotmEntries.push({label:"⏳ "+n.slice(11)+"  (scheduled "+n.slice(0,10)+")",relpath:"games/"+sysName+"/"+n.slice(11)});
         }
       }
     }
@@ -1055,14 +1202,27 @@ async function resolvePath(rel){
   // Already scheduled? Look in the hidden staging folder — importing a CSV with a
   // new date then simply RE-DATES the staged entry instead of failing.
   try{
-    for(const stage of await stageDirsFor(sys)){
-    for await(const [n,h] of stage.entries()){
-      if(stripPrefix(n)===last){ const info=await classifyEntry(last,h); return {sys:sysName,sysHandle:sys.handle,name:last,kind:h.kind==="directory"?"directory":"file",handle:h,stageHandle:stage,sysfile:info.sysfile,systemReason:info.reason,staged:n}; }
-    }
-    }
+    const hit=(await stagedIndexFor(sys)).get(last);
+    if(hit){ const h=hit.h, info=await classifyEntry(last,h); return {sys:sysName,sysHandle:sys.handle,name:last,kind:h.kind==="directory"?"directory":"file",handle:h,stageHandle:hit.stage,sysfile:info.sysfile,systemReason:info.reason,staged:hit.n}; }
   }catch(e){}
   return {error:"file not found", sys:sysName, sysHandle:sys.handle};
 }
+// Staged names are indexed once per CSV review (was: a full scan of every staged
+// entry for every row — 1,000 rows x 5,000 staged = ~3.9 million handle creations).
+let csvStagedIndex=null;
+async function stagedIndexFor(sys){
+  csvStagedIndex=csvStagedIndex||new Map();
+  if(!csvStagedIndex.has(sys.name))csvStagedIndex.set(sys.name,(async()=>{
+    const m=new Map();
+    for(const stage of await stageDirsFor(sys))
+      for await(const [n,h] of stage.entries())
+        if(DATE_RE.test(n)&&!/\.crswap$/i.test(n)&&!m.has(stripPrefix(n)))m.set(stripPrefix(n),{n,h,stage});
+    return m;
+  })());
+  return csvStagedIndex.get(sys.name);
+}
+let csvSysFiles=new Map();   // sys -> Promise<[{name,kind}]>, reset per review
+function csvFilesFor(sys){if(!csvSysFiles.has(sys))csvSysFiles.set(sys,listSystemFiles(sys));return csvSysFiles.get(sys);}
 async function listSystemFiles(sysName){
   const sys=systems.find(s=>s.name===sysName); if(!sys) return [];
   const out=[]; for await(const [n,h] of sys.handle.entries()){
@@ -1082,10 +1242,16 @@ function csvParseInput(text){
   if(["path","file","filepath","relative_path","relativepath"].includes(h)) rows.shift();
   return rows.map(r=>({path:(r[0]||"").trim(), date:(r[1]||"").trim(), message:(r[2]||"").trim()}));
 }
+let csvReviewSeq=0;
 async function csvReview(text){
+  // Rows are collected into a local list and published only if no newer review
+  // started meanwhile (a double-click on Review, or a reconnect re-review).
+  const seq=++csvReviewSeq, out=[];
   const raw=csvParseInput(text);
-  csvRows=[];
+  csvStagedIndex=null;csvSysFiles=new Map();
+  let i=0;
   for(const r of raw){
+    if(++i%100===0){if(seq!==csvReviewSeq)return;$("#csvSummary").textContent=`Reviewing ${i}/${raw.length}…`;await new Promise(r=>setTimeout(r));}
     // GOT'eM track: a month (not a day) in the date column schedules a Game of the Month pick
     const gotem=normMonth(r.date);
     const date=gotem?null:normDate(r.date);
@@ -1101,7 +1267,7 @@ async function csvReview(text){
         if(res.error){ row.status="NOT FOUND: "+res.error; row.sys=res.sys||(row.path.split("/")[0]); }
         else { row.status="OK"; }
       }
-      csvRows.push(row); continue;
+      out.push(row); continue;
     }
     else if(!date){ const res=await resolvePath(r.path); Object.assign(row,res.error?{}:res);
       row.status=r.dateRaw.trim()?("bad date: '"+r.dateRaw+"'"):"missing date"; row.needsdate=!res.error; }
@@ -1121,8 +1287,10 @@ async function csvReview(text){
       }
       else { Object.assign(row,res); row.status="OK"; }
     }
-    csvRows.push(row);
+    out.push(row);
   }
+  if(seq!==csvReviewSeq)return;
+  csvRows=out;
   renderCsvTable();
   // If most rows failed to resolve, the likely cause is the WRONG folder being
   // connected (a single system folder instead of games/, or a stale handle) —
@@ -1134,17 +1302,19 @@ async function csvReview(text){
   }
 }
 function rowOk(r){ return r.status==="OK" && !r.skip; }
+let csvRenderSeq=0;
 async function renderCsvTable(){
-  const box=$("#csvTable"); box.innerHTML="";
+  const seq=++csvRenderSeq;       // newer renders supersede older ones (no interleaved rows)
+  const box=$("#csvTable");
   if(!csvRows.length){ box.innerHTML='<p class="sub">No rows.</p>'; $("#csvApplyRow").style.display="none"; return; }
+  const frag=document.createDocumentFragment(), lists=new Map();
   for(let i=0;i<csvRows.length;i++){
     const r=csvRows[i];
     const div=document.createElement("div"); div.className="qrow";
     const ok=rowOk(r);
-    const stat=ok?(r.gotem?'<span style="color:var(--accent2)">GOT\'eM '+r.gotem+'</span>':r.staged?(r.redate?'<span style="color:var(--accent2)">RE-DATE</span>':'<span style="color:var(--accent)">OK (scheduled)</span>'):'<span style="color:var(--accent)">OK</span>'):'<span style="color:var(--bad)">'+r.status+'</span>';
-    div.innerHTML=`<span class="d">${r.gotem||r.date||r.dateRaw||"—"}</span>
+    const stat=ok?(r.gotem?'<span style="color:var(--accent2)">GOT\'eM '+r.gotem+'</span>':r.staged?(r.redate?'<span style="color:var(--accent2)">RE-DATE</span>':'<span style="color:var(--accent)">OK (scheduled)</span>'):'<span style="color:var(--accent)">OK</span>'):'<span style="color:var(--bad)">'+r.status.replace(/</g,"&lt;")+'</span>';
+    div.innerHTML=`<span class="d">${r.gotem||r.date||(r.dateRaw||"").replace(/</g,"&lt;")||"—"}</span>
       <span class="n">${(r.path||"").replace(/</g,"&lt;")} ${r.message?'<span class="tag">msg</span>':''} — ${stat}</span>`;
-    // date picker for rows missing a usable date (pick right here, no re-import needed)
     if(!ok && r.needsdate){
       const di=document.createElement("input"); di.type="date"; di.style.maxWidth="160px";
       di.onchange=()=>{ if(!di.value)return; r.date=di.value; r.status="OK";
@@ -1152,22 +1322,29 @@ async function renderCsvTable(){
         renderCsvTable(); };
       div.appendChild(di);
     }
-    // remap dropdown for NOT FOUND rows (lets you fix a typo'd filename)
+    // NOT FOUND: one shared <datalist> per system (was one full <select> per row:
+    // 300 rows x 5,000 files = 1.5 million <option> nodes, ~6 GB renderer).
     if(r.status.startsWith("NOT FOUND") && r.sys){
-      const sel=document.createElement("select"); sel.style.maxWidth="260px";
-      sel.innerHTML='<option value="">— pick correct file —</option>';
-      const files=await listSystemFiles(r.sys);
-      files.forEach(f=>{const o=document.createElement("option");o.value=f.name;o.textContent=f.name;sel.appendChild(o);});
-      sel.onchange=async()=>{ if(!sel.value)return; const res=await resolvePath(r.sys+"/"+sel.value); if(!res.error){Object.assign(r,res);r.path=r.sys+"/"+sel.value;r.status="OK";} renderCsvTable(); };
-      div.appendChild(sel);
+      if(!lists.has(r.sys)){
+        const files=await csvFilesFor(r.sys); if(seq!==csvRenderSeq)return;
+        const dl=document.createElement("datalist"); dl.id="csvdl_"+lists.size;
+        dl.innerHTML=files.map(f=>`<option value="${f.name.replace(/&/g,"&amp;").replace(/"/g,"&quot;")}"></option>`).join("");
+        frag.appendChild(dl); lists.set(r.sys,dl.id);
+      }
+      const inp=document.createElement("input"); inp.type="text"; inp.setAttribute("list",lists.get(r.sys));
+      inp.placeholder="— pick correct file —"; inp.style.maxWidth="260px";
+      inp.onchange=async()=>{ if(!inp.value)return; const res=await resolvePath(r.sys+"/"+inp.value); if(!res.error){Object.assign(r,res);r.path=r.sys+"/"+inp.value;r.status="OK";} renderCsvTable(); };
+      div.appendChild(inp);
     } else {
       const skip=document.createElement("label"); skip.style.fontSize="12px"; skip.style.color="var(--dim)";
       skip.innerHTML=`<input type="checkbox" ${r.skip?"checked":""}> skip`;
       skip.querySelector("input").onchange=e=>{r.skip=e.target.checked;renderCsvTable();};
       div.appendChild(skip);
     }
-    box.appendChild(div);
+    frag.appendChild(div);
   }
+  if(seq!==csvRenderSeq)return;
+  box.innerHTML=""; box.appendChild(frag);
   const okc=csvRows.filter(rowOk).length, bad=csvRows.length-okc;
   $("#csvSummary").textContent=`${okc} ready, ${bad} skipped/needs fixing`;
   $("#csvApplyRow").style.display = okc>0 ? "flex" : "none";
@@ -1186,20 +1363,24 @@ async function renderCsvTable(){
 }
 async function csvApply(){
   const rows=csvRows.filter(rowOk);
-  if(!rows.length)return;
-  let done=0,fail=0,lastErr=null;
-  for(const r of rows){
+  if(!rows.length||$("#csvApply").disabled)return;
+  $("#csvApply").disabled=true;
+  try{await csvApplyRows(rows);}
+  finally{$("#csvApply").disabled=false;}
+}
+async function csvApplyRows(rows){
+  let done=0,fail=0,lastErr=null,stopped=0;const reqs=[],occ={};
+  for(let i=0;i<rows.length;i++){const r=rows[i];
     try{
       if(r.gotem){    // GOT'eM track: one pick per month into gotm.tsv (message = shortcut label)
-        await writeGotm(r.gotem, gotmStatePath(r.path)+(r.message?"\t"+r.message:""));
+        await writeGotm(r.gotem, gotmStatePath(r.path)+(r.message?"\t"+r.message:""));   // <=1 per month: per-row is fine
         done++; continue;
       }
       if(r.sysfile||(!r.staged&&isSystemFile(r.name,r.kind))) continue;   // hard guard (belt & braces)
       const sys=systems.find(s=>s.name===r.sys);
       if(stateIsConsole){
-        await requestSchedule(r.date,r.sys,stripPrefix(r.name));
-        if(r.message)await writeOccasion(r.date,r.message);
-        done++;continue;
+        reqs.push({date:r.date,sys:r.sys,name:stripPrefix(r.name),message:r.message});   // banner saved only if this row is accepted
+        continue;
       }
       const stage=r.stageHandle||await stageDirFor(sys);
       const newName=r.date+"_"+stripPrefix(r.name);
@@ -1211,14 +1392,28 @@ async function csvApply(){
       }
       else if(r.kind==="file") await moveFile(sys.handle,r.name,stage,newName);
       else await moveDir(sys.handle,r.name,stage,newName);
-      if(r.message) await writeOccasion(r.date,r.message);
+      if(r.message) occ[r.date]=r.message;
       done++;
-    }catch(e){console.error(e);lastErr=e;fail++;}
+    }catch(e){console.error(e);lastErr=e;fail++;
+      // Limited mode: nothing was copied; a refusal that repeats for every game stops the import.
+      if(moveStopsBatch(e)){stopped=rows.length-i-1;break;}}
+  }
+  // Whole card: every schedule/re-date row is ONE ledger write; banners are one more.
+  let requestsOk=true;
+  if(reqs.length){
+    try{const {rejected}=await applyMoveRequests({schedule:reqs});done+=reqs.length-rejected.length;
+      const bad=new Set(rejected);for(const q of reqs)if(q.message&&!bad.has(q))occ[q.date]=q.message;
+      if(rejected.length){fail+=rejected.length;lastErr=new Error("name contains an unsupported tab, slash, or newline: "+rejected[0].name);}}
+    catch(e){console.error(e);lastErr=e;fail+=reqs.length;requestsOk=false;}
+  }
+  let bannerErr=null;
+  if(requestsOk&&Object.keys(occ).length){
+    try{await writeOccasions(occ);}catch(e){console.error(e);bannerErr=e;}
   }
   csvRows=[]; $("#csvTable").innerHTML=""; $("#csvApplyRow").style.display="none";
   $("#csvPaste").value=""; $("#csvSummary").textContent="";
-  await loadGames($("#systemSel").value); await refreshQueue();
-  toast(`Imported ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed)":""}`,fail>0);
+  await loadGames($("#systemSel").value);
+  toast(`Imported ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed"+(lastErr?": "+lastErr.message:"")+")":""}${stopped?" ("+stopped+" not attempted)":""}${bannerErr?" — banner messages were not saved ("+(bannerErr.message||bannerErr.name)+")":""}`,fail>0||!!bannerErr);
   if(fail&&isConnError(lastErr))guideReconnect("Some rows couldn't be imported — the folder connection looks stale");
   showTab("queue");
 }
@@ -1262,20 +1457,19 @@ function cleanFolderName(s,fallback){
   if(!s.startsWith("_")) s="_"+s;
   return s;
 }
-async function readConfigIni(){
-  try{const fh=await stateDir.getFileHandle("config.ini");return await(await fh.getFile()).text();}
-  catch(e){return "";}
-}
-async function patchConfigIni(kv){
-  let t=await readConfigIni();
-  for(const [k,v] of Object.entries(kv)){
-    const line=`${k}="${v}"`;
-    const re=new RegExp("^"+k+"\\s*=.*$","m");
-    if(re.test(t)) t=t.replace(re,line);
-    else t+=(t.endsWith("\n")||!t?"":"\n")+line+"\n";
-  }
-  const fh=await stateDir.getFileHandle("config.ini",{create:true});
-  const w=await fh.createWritable();await w.write(t);await w.close();
+async function readConfigIni(strict){return readStateText("config.ini",strict);}
+function patchConfigIni(kv){
+  return withStateLock(async()=>{
+    let t=await readConfigIni(true);
+    for(const [k,v] of Object.entries(kv)){
+      const line=`${k}="${v}"`;
+      const re=new RegExp("^"+k+"\\s*=.*$","m");
+      if(re.test(t)) t=t.replace(re,()=>line);
+      else t+=(t.endsWith("\n")||!t?"":"\n")+line+"\n";
+    }
+    const fh=await stateDir.getFileHandle("config.ini",{create:true});
+    const w=await fh.createWritable();await w.write(t);await w.close();
+  });
 }
 // OSD budget: ~30 chars total. Date label "New Fri Jul 3, 26" ≈ 17-18; month tag " - Aug" = 6.
 const OSD_MAX=30, DATE_ROOM=18, MONTH_ROOM=6;
@@ -1309,6 +1503,10 @@ async function cfgLoad(){
   $("#cfgGotmMonth").checked=(get("GOTM_MONTH")??"0")==="1";
   $("#cfgShowcase").checked=(get("SHOWCASE")??"1")!=="0";
   $("#cfgGotmOn").checked=(get("GOTM")??"1")!=="0";
+  $("#cfgSysShortcuts").checked=(get("SYSTEM_SHORTCUTS")??"0")==="1";
+  // Same cleaning as the engine's df_cfg_dirname, so both sides guard one name.
+  const scDir=(get("SYSTEM_SHORTCUTS_DIR")||"").replace(/[<>:"\/\\|?*]/g,"").trim();
+  SYS_SHORTCUTS_DIR=scDir&&!scDir.startsWith(".")?scDir:"_Dripfeed New";
   cfgUpdateLimits();
 }
 $("#cfgApply").onclick=async()=>{
@@ -1322,12 +1520,15 @@ $("#cfgApply").onclick=async()=>{
   const gMax=$("#cfgGotmMonth").checked?OSD_MAX-MONTH_ROOM:OSD_MAX;
   prefix=prefix.slice(0,pMax);
   const gotm=cleanFolderName($("#cfgGotm").value,"_Game of the Month").slice(0,gMax);
-  await patchConfigIni({SHOWCASE_PREFIX:prefix,SHOWCASE_DATE:$("#cfgShowDate").checked?"1":"0",
-    GOTM_DIRNAME:gotm,GOTM_MONTH:$("#cfgGotmMonth").checked?"1":"0",
-    SHOWCASE:$("#cfgShowcase").checked?"1":"0",GOTM:$("#cfgGotmOn").checked?"1":"0"});
+  try{
+    await patchConfigIni({SHOWCASE_PREFIX:prefix,SHOWCASE_DATE:$("#cfgShowDate").checked?"1":"0",
+      GOTM_DIRNAME:gotm,GOTM_MONTH:$("#cfgGotmMonth").checked?"1":"0",
+      SHOWCASE:$("#cfgShowcase").checked?"1":"0",GOTM:$("#cfgGotmOn").checked?"1":"0",
+      SYSTEM_SHORTCUTS:$("#cfgSysShortcuts").checked?"1":"0"});
+  }catch(e){console.error(e);toast("config.ini was not changed: "+(e&&e.message||e&&e.name||"error"),true);return;}
   $("#cfgPrefix").value=prefix;$("#cfgGotm").value=gotm;
   cfgUpdateLimits();
-  toast("Folder names saved to config.ini.");
+  toast("Folder settings saved to config.ini.");
 };
 cfgUpdateLimits();
 $("#stageName").value=STAGE_ROOT_NAME;
@@ -1335,55 +1536,94 @@ $("#stageApply").onclick=async()=>{
   let v=$("#stageName").value.trim()||".dripfeed-library";
   if(!v.startsWith(".")){toast("Staging name must start with a dot so it stays hidden.",true);return;}
   if(v.includes("/")||v.includes("\\")){toast("Use one folder name, without slashes.",true);return;}
+  // Save config.ini first: the page switches only once the engine will read the
+  // same waiting library.
+  if(stateIsConsole){
+    try{await patchConfigIni({STAGING_ROOT:"/media/fat/"+v});}
+    catch(e){console.error(e);toast("config.ini was not changed: "+(e&&e.message||e&&e.name||"error"),true);return;}
+  }
   STAGE_ROOT_NAME=v;
   if(stateIsConsole&&sdRoot){stageRoot=await sdRoot.getDirectoryHandle(STAGE_ROOT_NAME,{create:true});}
   else stageRoot=null;
-  if(stateIsConsole)await patchConfigIni({STAGING_ROOT:"/media/fat/"+STAGE_ROOT_NAME});
   toast("Waiting library set to "+STAGE_ROOT_NAME);
   if(systems.length){await loadGames($("#systemSel").value);await refreshQueue();}
 };
 
 // ---------- export .ics ----------
-function icsEscape(s){return String(s||"").replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");}
-function icsFold(line){ // fold long lines at 73 octets per RFC 5545 (continuation = CRLF + space)
-  let out="",s=line;
-  while(s.length>73){out+=s.slice(0,73)+"\r\n ";s=s.slice(73);}
-  return out+s;
+// RFC 5545 calendar of the schedule (pure builder; exportIcs only downloads it).
+// Each game keeps ONE UID for life — system plus a hash of its clean name, never
+// its date, its place in the list, or a counter — and every export carries a
+// larger SEQUENCE, so importing a newer file moves a re-dated game's event
+// instead of adding a second one.
+const ICS_EPOCH=Date.UTC(2026,0,1);   // SEQUENCE = whole minutes since this instant
+// TEXT may not hold control characters other than HTAB (RFC 5545 §3.3.11), so
+// any other C0 control or DEL is dropped after newlines become \n.
+function icsEscape(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r\n|\r|\n/g,"\\n").replace(/[\x00-\x08\x0a-\x1f\x7f]/g,"");}
+function utf8Len(cp){return cp<0x80?1:cp<0x800?2:cp<0x10000?3:4;}
+// At most 75 octets per physical line; a continuation is CRLF + one space, and
+// that space counts toward its line's 75. A UTF-8 character is never split.
+function icsFold(line){
+  let out="",cur="",n=0;
+  for(const ch of String(line)){
+    const b=utf8Len(ch.codePointAt(0));
+    if(n+b>75){out+=cur+"\r\n";cur=" ";n=1;}
+    cur+=ch;n+=b;
+  }
+  return out+cur;
 }
-function stamp(){return new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,"");} // YYYYMMDDTHHMMSSZ
-function nextDay(ymd){const d=new Date(ymd+"T00:00:00");d.setDate(d.getDate()+1);
-  return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());}
+// cyrb53: a 53-bit string hash that is identical in every browser and in Node.
+function stableHash(str){
+  let h1=0xdeadbeef,h2=0x41c6ce57;
+  for(let i=0;i<str.length;i++){const c=str.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677);}
+  h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);
+  return (4294967296*(2097151&h2)+(h1>>>0)).toString(16).padStart(14,"0");
+}
+function icsUid(sys,clean){
+  const s=String(sys), safe=s.replace(/[^A-Za-z0-9._-]/g,"_");
+  return "dripfeed-"+(safe===s?s:safe+"."+stableHash(s).slice(-6))+"-"+stableHash(String(clean).normalize("NFC"))+"@dripfeed";
+}
+function icsStamp(now){return now.toISOString().replace(/[-:]/g,"").replace(/\.\d+/,"");}   // YYYYMMDDTHHMMSSZ (UTC)
+function icsSequence(now){return Math.max(0,Math.floor((now.getTime()-ICS_EPOCH)/60000));}
+function icsDate(ymd,addDays){const [y,m,d]=ymd.split("-").map(Number);const t=new Date(Date.UTC(y,m-1,d+(addDays||0)));
+  return t.getUTCFullYear()+pad(t.getUTCMonth()+1)+pad(t.getUTCDate());}
+// items: [{date:"YYYY-MM-DD",sys,clean}], occ: {date: banner}. opts: {now, alarm}.
+// Returns {text,count}. One event per game; if a game is listed twice (two
+// staging folders), its earliest date is kept. Output order never depends on
+// the input order.
+function buildIcs(items,occ,opts){
+  const now=(opts&&opts.now)||new Date(), alarm=!!(opts&&opts.alarm);
+  const dt=icsStamp(now), seq=icsSequence(now);
+  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Dripfeed//Scheduler//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH","X-WR-CALNAME:Dripfeed game schedule"];
+  const cmp=(a,b)=>a<b?-1:a>b?1:0;
+  const list=items.filter(it=>it&&/^\d{4}-\d{2}-\d{2}$/.test(it.date)&&it.clean&&it.sys)
+    .slice().sort((a,b)=>cmp(a.date,b.date)||cmp(a.sys,b.sys)||cmp(a.clean,b.clean));
+  const seen=new Set(); let count=0;
+  for(const it of list){
+    const uid=icsUid(it.sys,it.clean);
+    if(seen.has(uid))continue; seen.add(uid);
+    const msg=(occ&&occ[it.date])||"";
+    const notes=(msg?msg+"\n\n":"")+"System: "+it.sys+(msg?"\n(Custom banner shown on the console for "+it.date+".)":"");
+    const summary="🎮 "+it.clean+" ("+it.sys+")";
+    L.push("BEGIN:VEVENT","UID:"+uid,"SEQUENCE:"+seq,"DTSTAMP:"+dt,
+      "DTSTART;VALUE=DATE:"+icsDate(it.date),"DTEND;VALUE=DATE:"+icsDate(it.date,1),
+      "SUMMARY:"+icsEscape(summary),"DESCRIPTION:"+icsEscape(notes),"TRANSP:TRANSPARENT");
+    // All-day events start at local midnight, so PT9H is 9 AM on the day.
+    if(alarm)L.push("BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+icsEscape("Unlocks today: "+summary),"TRIGGER:PT9H","END:VALARM");
+    L.push("END:VEVENT");
+    count++;
+  }
+  L.push("END:VCALENDAR");
+  return {text:L.map(icsFold).join("\r\n")+"\r\n",count};
+}
 
 async function exportIcs(){
   const items=await getQueueItems();
   if(!items.length){toast("Nothing scheduled to export.",true);return;}
   const occ=await readOccasions();
-  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Dripfeed//Scheduler//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH","X-WR-CALNAME:Dripfeed game schedule"];
-  const dt=stamp();
-  let n=0;
-  for(const it of items){
-    const ymd=it.date.replace(/-/g,"");
-    const msg=occ[it.date]||"";
-    const notes=(msg?msg+"\n\n":"")+"System: "+it.sys+(msg?"\n(Custom banner shown on the console for "+it.date+".)":"");
-    const uid="dripfeed-"+ymd+"-"+it.sys+"-"+it.clean.replace(/[^A-Za-z0-9]/g,"").slice(0,40)+"-"+(n++)+"@dripfeed";
-    L.push("BEGIN:VEVENT");
-    L.push("UID:"+uid);
-    L.push("DTSTAMP:"+dt);
-    L.push("DTSTART;VALUE=DATE:"+ymd);
-    L.push("DTEND;VALUE=DATE:"+nextDay(it.date));
-    L.push("SUMMARY:"+icsEscape("🎮 "+it.clean+" ("+it.sys+")"));
-    L.push("DESCRIPTION:"+icsEscape(notes));
-    L.push("TRANSP:TRANSPARENT");
-    L.push("END:VEVENT");
-  }
-  L.push("END:VCALENDAR");
-  const ics=L.map(icsFold).join("\r\n")+"\r\n";
-  const blob=new Blob([ics],{type:"text/calendar;charset=utf-8"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");a.href=url;a.download="dripfeed-schedule.ics";
-  document.body.appendChild(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-  toast("Exported "+items.length+" game"+(items.length>1?"s":"")+" to dripfeed-schedule.ics");
+  const {text,count}=buildIcs(items,occ,{now:new Date(),alarm:$("#icsAlarm").checked});
+  downloadText("dripfeed-schedule.ics",text,"text/calendar;charset=utf-8");
+  toast("Exported "+count+" game"+(count!==1?"s":"")+" to dripfeed-schedule.ics");
 }
 $("#exportIcs").onclick=exportIcs;
 

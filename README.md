@@ -53,7 +53,11 @@ backlog rotation, or personal and community Game of the Month picks.
   ordinary graphical library scans cannot discover them early. The first
   update migrates old per-system queues with interruption-safe card renames.
 - Let the web app prepare a schedule while the card-side engine performs the
-  actual whole-folder move; no browser recursive copy/delete is used.
+  actual move as a same-card rename; the browser never copies game data.
+- Work with graphical frontends that build their own library from system
+  folders: refresh their library to see new reveals, optionally run your own
+  refresh command after a reveal, and optionally add a `_Dripfeed New` shortcut
+  folder inside each system folder.
 - Change future dates without disturbing games already revealed.
 - Keep dated Dripfeed releases and monthly GOT'eM spotlights independent.
 - Feature an existing Arcade game through GOT'eM without moving its original.
@@ -85,6 +89,11 @@ backlog rotation, or personal and community Game of the Month picks.
 ### Limitations
 
 - Automatic releases pause when MiSTer has no believable date and time.
+- Dripfeed manages games on the SD card's `games/` only. Moves that would cross
+  to a USB drive or network share are refused, never copied.
+- Graphical frontends that keep their own library show new games only after
+  their library is refreshed, and they do not show top-level menu folders such
+  as What's New.
 - The web app sees only the card or folder you choose.
 - Custom core names may need a mapping update for What's New shortcuts.
 - A community GOT'eM source needs internet; local picks do not.
@@ -276,9 +285,10 @@ official Wi-Fi helper. It only gives that helper a friendly list of choices.
 ### Dripfeed + GOT'eM
 
 Never overwrites a visible game, keeps firmware out of the schedule, moves a
-multi-disc folder as one item, and journals interrupted work. Tests cover
-scheduling, rescheduling, reveals, recovery, GOT'eM, CSV, firmware guards, and
-disc folders.
+multi-disc folder as one item with a same-card rename (never a copy), lets only
+one run move games at a time, and journals interrupted work. Tests cover
+scheduling, rescheduling, reveals, recovery, GOT'eM, CSV, firmware guards, disc
+folders, and the web scheduler's own browser logic.
 
 ### Profiler
 
