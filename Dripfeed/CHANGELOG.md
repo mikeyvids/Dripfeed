@@ -30,8 +30,9 @@
   run that changed the system folders: games revealed, hidden (browser requests,
   `add`, an old in-games queue moved), put back (unscheduled, Undrip), or
   Dripfeed's What's New and GOT'eM shortcuts inside system folders added or
-  removed. Never on a run that changed nothing, never at shutdown. At boot, games
-  hidden before the first reveal share one call with it. New variables:
+  removed. Never on a run that changed nothing, never at shutdown, and only on the
+  MiSTer itself. At boot, games hidden before the first reveal share one call with
+  it when it runs right after `BOOT_DELAY`, else get their own. New variables:
   `DRIPFEED_HIDDEN_COUNT`, `DRIPFEED_RETURNED_COUNT` and
   `DRIPFEED_CHANGED_SYSTEMS`.
 - 1.4.0 was a test build that was never published; this entry and 1.4.0's below

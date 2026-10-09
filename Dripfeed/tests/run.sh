@@ -656,6 +656,9 @@ sch "$CQ" add SNES today "$CQ/games/SNES/One.sfc" >/dev/null 2>&1; sch "$CQ" add
 chk "a command-line schedule runs it once per command, for the games it hid" '[ "$(qlines)" = 2 ] && [ "$(sed -n 1p "$QOUT")" = "#0 |H1|B0|CSNES" ] && [ "$(sed -n 2p "$QOUT")" = "#0 |H2|B0|CNES" ]'
 sch "$CQ" add NES 2099-01-01 "$CQ/.dripfeed-library/NES/$(date +%Y-%m-%d)_Extra.nes" >/dev/null 2>&1
 chk "re-dating a hidden game changes nothing in sight: not run" '[ "$(qlines)" = 2 ] && [ -e "$CQ/.dripfeed-library/NES/2099-01-01_Extra.nes" ]'
+mkdir -p "$CQ/Downloads"; echo n > "$CQ/Downloads/From Outside.sfc"
+sch "$CQ" add SNES 2099-01-01 "$CQ/Downloads/From Outside.sfc" >/dev/null 2>&1
+chk "scheduling a file from outside games/ hides nothing in sight: not run" '[ "$(qlines)" = 2 ] && [ -e "$CQ/.dripfeed-library/SNES/2099-01-01_From Outside.sfc" ]'
 eng "$CQ" --auto >/dev/null 2>&1
 chk "run exactly once at the end of a pass that revealed games; exit status logged" '[ "$(qlines)" = 3 ] && sed -n 3p "$QOUT" | grep -Eq "^#2 (NES SNES|SNES NES)\|H0\|B0\|C(NES SNES|SNES NES)$" && grep -q "POST_REVEAL_CMD exit status 0" "$QREQ/dripfeed.log"'
 echo h > "$CQ/games/SNES/Browser Hide.sfc"
@@ -697,7 +700,27 @@ chk "the What's New shortcut backfilled on the next pass runs it once" '[ "$(bli
 : > "$BOUT"; eng "$CB" --gotm >/dev/null 2>&1; eng "$CB" --auto >/dev/null 2>&1
 chk "unchanged GOT'eM and nothing due: not run again" '[ "$(blines)" = 0 ]'
 : > "$BOUT"; eng "$CB" --undrip >/dev/null 2>&1
-chk "Undrip runs it once for the games put back and the shortcut folders removed" '[ "$(blines)" = 1 ] && grep -Eq "^#0\|H0\|B2\|C" "$BOUT" && [ -f "$CB/games/SNES/Boot Hide.sfc" ] && [ -f "$CB/games/SNES/Boot Hide 2.sfc" ] && [ ! -e "$CB/games/NES/_Game of the Month" ]'
+chk "Undrip runs it once for the games put back and the shortcut folders removed" '[ "$(blines)" = 1 ] && grep -Eq "^#0\|H0\|B2\|C(NES SNES|SNES NES)$" "$BOUT" && [ -f "$CB/games/SNES/Boot Hide.sfc" ] && [ -f "$CB/games/SNES/Boot Hide 2.sfc" ] && [ ! -e "$CB/games/NES/_Game of the Month" ]'
+
+echo "== POST_REVEAL_CMD: only real changes (review cases) =="
+newcard CX; mkdir -p "$CX/games/NES" "$CX/games/SNES"; XOUT="$CX/post.out"; XREQ="$CX/Scripts/.dripfeed"
+printf "POST_REVEAL_CMD='echo \"#\$DRIPFEED_REVEALED_COUNT|H\$DRIPFEED_HIDDEN_COUNT|B\$DRIPFEED_RETURNED_COUNT|C\$DRIPFEED_CHANGED_SYSTEMS\" >> \"%s\"'\nSYSTEM_SHORTCUTS=1\n" "$XOUT" >> "$XREQ/config.ini"
+xlines(){ if [ -f "$XOUT" ]; then wc -l < "$XOUT" | tr -d " "; else echo 0; fi; }
+echo p > "$CX/games/NES/Pick.nes"; printf '%s\tgames/NES/Pick.nes\n' "$MONTH_NOW" > "$XREQ/gotm.tsv"
+printf '%s\tgames/SNES/Not On This Card.sfc\n' "$MONTH_NOW" > "$CX/community.tsv"; printf 'GOTM_SOURCE=%s\n' "$CX/community.tsv" >> "$XREQ/config.ini"
+eng "$CX" --auto >/dev/null 2>&1; XN="$(xlines)"
+eng "$CX" --auto >/dev/null 2>&1; eng "$CX" --auto >/dev/null 2>&1
+chk "while the community pick is missing, rebuilding the same GOT'eM shortcut every pass does not run it again" '[ "$XN" = 1 ] && [ "$(xlines)" = 1 ] && [ -f "$CX/games/NES/_Game of the Month/Pick.mgl" ] && [ "$(grep -c "GOTM built (_Game of the Month)" "$XREQ/dripfeed.log")" -ge 3 ]'
+echo x > "$CX/games/NES/Cross.nes"; : > "$XOUT"
+sch "$CX" add SNES 2099-01-01 "$CX/games/NES/Cross.nes" >/dev/null 2>&1
+chk "a game scheduled under another system is counted under the folder it left" '[ "$(cat "$XOUT")" = "#0|H1|B0|CNES" ]'
+mkdir -p "$CX/games/SNES/.dripfeed"; echo l > "$CX/games/SNES/.dripfeed/2099-01-01_Legacy.sfc"; : > "$XOUT"
+eng "$CX" --migrate >/dev/null 2>&1
+chk "--migrate (old in-games queue moved out) runs it once" '[ "$(cat "$XOUT")" = "#0|H1|B0|CSNES" ] && [ -e "$CX/.dripfeed-library/SNES/2099-01-01_Legacy.sfc" ]'
+mkdir -p "$CX/.dripfeed-library/NES"; echo b > "$CX/.dripfeed-library/NES/2099-01-01_boot.rom"; : > "$XOUT"
+sch "$CX" remove NES 2099-01-01_boot.rom >/dev/null 2>&1
+chk "putting back a firmware file from the queue runs it as returned, not revealed" '[ "$(cat "$XOUT")" = "#0|H0|B1|CNES" ] && [ -f "$CX/games/NES/boot.rom" ]'
+chk "the on-MiSTer test matches the launchers (not /media/fat, not ARM: off)" '! lib "$CX" "df_on_mister"'
 
 echo "== TOUCH_ON_REVEAL: the reveal time becomes the file date; contents unchanged =="
 newcard CT; mkdir -p "$CT/games/SNES" "$CT/games/PSX/Old Set"

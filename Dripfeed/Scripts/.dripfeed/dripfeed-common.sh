@@ -1399,7 +1399,7 @@ df_gotm_mirror_clear() {   # $1 = GOT'eM folder base to clear; empty = every one
     [ -n "$f" ] || continue
     if [ -n "$want" ] && [ "$base" != "$want" ]; then keep="$keep$base"$'\t'"$f"$'\n'; continue; fi
     case "$f" in "$GAMES_DIR"/*/*/*.mgl) ;; *) continue ;; esac
-    if [ -f "$f" ]; then dir="${f#"$GAMES_DIR"/}"; rm -f "$f" && df_pass_changed "${dir%%/*}"; fi
+    if [ -f "$f" ]; then dir="${f#"$GAMES_DIR"/}"; rm -f "$f" && { [ "${DF_GOTM_QUIET:-0}" = 1 ] || df_pass_changed "${dir%%/*}"; }; fi
     dir="${f%/*}"; rm -f "$dir/.DS_Store" "$dir"/._* 2>/dev/null
     rmdir "$dir" 2>/dev/null && df_log "removed GOT'eM system shortcut folder: ${dir#"$GAMES_DIR"/}"
   done < "$DF_GOTM_MIRRORS"
@@ -1420,6 +1420,16 @@ df_gotm_mirror_prune() {   # keep the shortcuts of the folder bases given; clear
 $stale
 EOF_GOTM_STALE
   return 0
+}
+# "path<TAB>checksum" for each system-folder shortcut recorded for one GOT'eM base, so a
+# rebuild that writes back the same files is not counted as a change for POST_REVEAL_CMD.
+df_gotm_mirror_snapshot() {
+  [ -f "$DF_GOTM_MIRRORS" ] || return 0
+  local base f
+  while IFS=$'\t' read -r base f || [ -n "$base" ]; do
+    [ "$base" = "$1" ] && [ -f "$f" ] || continue
+    printf '%s\t%s\n' "$f" "$(cksum < "$f" 2>/dev/null)"
+  done < "$DF_GOTM_MIRRORS"
 }
 df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (relative to /media/fat)  $4 = custom label
   [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] || return 0
@@ -1444,7 +1454,7 @@ df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (rel
   [ -d "$dir" ] || made=1
   if df_make_mgl "$dir" "$sys" "$item" "$title"; then
     grep -qxF -- "$base"$'\t'"$out" "$DF_GOTM_MIRRORS" 2>/dev/null || printf '%s\t%s\n' "$base" "$out" >> "$DF_GOTM_MIRRORS"
-    df_pass_changed "$sys"
+    [ "${DF_GOTM_QUIET:-0}" = 1 ] || df_pass_changed "$sys"
     df_log "GOTM ($base): system shortcut ${out#"$GAMES_DIR"/}"
   elif [ "$made" -eq 1 ]; then
     rmdir "$dir" 2>/dev/null
@@ -1479,6 +1489,12 @@ df_gotm_mirror_ensure() {  # same arguments; adds the shortcut only if this fold
 #   DRIPFEED_HIDDEN_COUNT     games hidden            DRIPFEED_RETURNED_COUNT    games put back
 #   DRIPFEED_CHANGED_SYSTEMS  every system folder whose contents changed (space-separated)
 DF_PASS_REVEALED=0; DF_PASS_HIDDEN=0; DF_PASS_RETURNED=0; DF_PASS_SYSTEMS=""; DF_PASS_CHANGED=""
+# The MiSTer itself, never a computer with the card mounted at /media/fat (exFAT shows
+# every file as executable there): the same three tests as the launchers' on_mister().
+df_on_mister() {
+  [ "$DF_ROOT" = /media/fat ] && [ -x /media/fat/MiSTer ] &&
+    case "$(uname -m 2>/dev/null)" in arm*) true ;; *) false ;; esac
+}
 df_pass_changed() {   # $1 = system folder whose contents changed
   [ -n "$1" ] || return 0
   case " $DF_PASS_CHANGED " in *" $1 "*) ;; *) DF_PASS_CHANGED="${DF_PASS_CHANGED:+$DF_PASS_CHANGED }$1" ;; esac
@@ -1504,7 +1520,7 @@ df_post_reveal() {    # $1 revealed  $2 their systems  $3 hidden  $4 returned  $
   # The command is meant for the MiSTer (a frontend running there). The command-line
   # scheduler and --migrate also run on a computer with the card mounted: never
   # run it there (DRIPFEED_POST_REVEAL_ANYWHERE=1 allows it, e.g. for tests).
-  if [ "${DRIPFEED_POST_REVEAL_ANYWHERE:-0}" != 1 ] && { [ "$DF_ROOT" != /media/fat ] || [ ! -x /media/fat/MiSTer ]; }; then
+  if [ "${DRIPFEED_POST_REVEAL_ANYWHERE:-0}" != 1 ] && ! df_on_mister; then
     df_log "POST_REVEAL_CMD not run: this is not the MiSTer itself ($count revealed, $hidden hidden, $returned returned)"
     return 0
   fi

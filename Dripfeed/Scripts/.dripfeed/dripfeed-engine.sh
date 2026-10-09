@@ -407,7 +407,26 @@ df_gotm_clear() {   # remove Dripfeed's GOT'eM folders; leave anything else alon
 
 # Build ONE Game of the Month folder.  $1=folder base  $2=pick path  $3=custom label
 # Returns 1 if the pick exists but its file isn't on disk yet (caller retries later).
+# A folder is rebuilt on every pass while the OTHER folder waits for its pick, so its
+# system-folder shortcuts count as changed only when they really differ afterwards.
 df_gotm_build() {
+  local gbase before after rc line rel
+  gbase="$(df_showcase_sanitize "$1")"
+  before="$(df_gotm_mirror_snapshot "$gbase")"
+  DF_GOTM_QUIET=1; df_gotm_build_folder "$@"; rc=$?; DF_GOTM_QUIET=0
+  after="$(df_gotm_mirror_snapshot "$gbase")"
+  if [ "$before" != "$after" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      rel="${line%%$'\t'*}"; rel="${rel#"$GAMES_DIR"/}"; df_pass_changed "${rel%%/*}"
+    done <<EOF_GOTM_SNAP
+$before
+$after
+EOF_GOTM_SNAP
+  fi
+  return "$rc"
+}
+df_gotm_build_folder() {
   local base label dir want="$2" custom="$3" target
   base="$(df_showcase_sanitize "$1")"
   label="$(df_gotm_label "$base")"

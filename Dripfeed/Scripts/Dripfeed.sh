@@ -1441,7 +1441,7 @@ df_gotm_mirror_clear() {   # $1 = GOT'eM folder base to clear; empty = every one
     [ -n "$f" ] || continue
     if [ -n "$want" ] && [ "$base" != "$want" ]; then keep="$keep$base"$'\t'"$f"$'\n'; continue; fi
     case "$f" in "$GAMES_DIR"/*/*/*.mgl) ;; *) continue ;; esac
-    if [ -f "$f" ]; then dir="${f#"$GAMES_DIR"/}"; rm -f "$f" && df_pass_changed "${dir%%/*}"; fi
+    if [ -f "$f" ]; then dir="${f#"$GAMES_DIR"/}"; rm -f "$f" && { [ "${DF_GOTM_QUIET:-0}" = 1 ] || df_pass_changed "${dir%%/*}"; }; fi
     dir="${f%/*}"; rm -f "$dir/.DS_Store" "$dir"/._* 2>/dev/null
     rmdir "$dir" 2>/dev/null && df_log "removed GOT'eM system shortcut folder: ${dir#"$GAMES_DIR"/}"
   done < "$DF_GOTM_MIRRORS"
@@ -1462,6 +1462,16 @@ df_gotm_mirror_prune() {   # keep the shortcuts of the folder bases given; clear
 $stale
 EOF_GOTM_STALE
   return 0
+}
+# "path<TAB>checksum" for each system-folder shortcut recorded for one GOT'eM base, so a
+# rebuild that writes back the same files is not counted as a change for POST_REVEAL_CMD.
+df_gotm_mirror_snapshot() {
+  [ -f "$DF_GOTM_MIRRORS" ] || return 0
+  local base f
+  while IFS=$'\t' read -r base f || [ -n "$base" ]; do
+    [ "$base" = "$1" ] && [ -f "$f" ] || continue
+    printf '%s\t%s\n' "$f" "$(cksum < "$f" 2>/dev/null)"
+  done < "$DF_GOTM_MIRRORS"
 }
 df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (relative to /media/fat)  $4 = custom label
   [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] || return 0
@@ -1486,7 +1496,7 @@ df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (rel
   [ -d "$dir" ] || made=1
   if df_make_mgl "$dir" "$sys" "$item" "$title"; then
     grep -qxF -- "$base"$'\t'"$out" "$DF_GOTM_MIRRORS" 2>/dev/null || printf '%s\t%s\n' "$base" "$out" >> "$DF_GOTM_MIRRORS"
-    df_pass_changed "$sys"
+    [ "${DF_GOTM_QUIET:-0}" = 1 ] || df_pass_changed "$sys"
     df_log "GOTM ($base): system shortcut ${out#"$GAMES_DIR"/}"
   elif [ "$made" -eq 1 ]; then
     rmdir "$dir" 2>/dev/null
@@ -1521,6 +1531,12 @@ df_gotm_mirror_ensure() {  # same arguments; adds the shortcut only if this fold
 #   DRIPFEED_HIDDEN_COUNT     games hidden            DRIPFEED_RETURNED_COUNT    games put back
 #   DRIPFEED_CHANGED_SYSTEMS  every system folder whose contents changed (space-separated)
 DF_PASS_REVEALED=0; DF_PASS_HIDDEN=0; DF_PASS_RETURNED=0; DF_PASS_SYSTEMS=""; DF_PASS_CHANGED=""
+# The MiSTer itself, never a computer with the card mounted at /media/fat (exFAT shows
+# every file as executable there): the same three tests as the launchers' on_mister().
+df_on_mister() {
+  [ "$DF_ROOT" = /media/fat ] && [ -x /media/fat/MiSTer ] &&
+    case "$(uname -m 2>/dev/null)" in arm*) true ;; *) false ;; esac
+}
 df_pass_changed() {   # $1 = system folder whose contents changed
   [ -n "$1" ] || return 0
   case " $DF_PASS_CHANGED " in *" $1 "*) ;; *) DF_PASS_CHANGED="${DF_PASS_CHANGED:+$DF_PASS_CHANGED }$1" ;; esac
@@ -1546,7 +1562,7 @@ df_post_reveal() {    # $1 revealed  $2 their systems  $3 hidden  $4 returned  $
   # The command is meant for the MiSTer (a frontend running there). The command-line
   # scheduler and --migrate also run on a computer with the card mounted: never
   # run it there (DRIPFEED_POST_REVEAL_ANYWHERE=1 allows it, e.g. for tests).
-  if [ "${DRIPFEED_POST_REVEAL_ANYWHERE:-0}" != 1 ] && { [ "$DF_ROOT" != /media/fat ] || [ ! -x /media/fat/MiSTer ]; }; then
+  if [ "${DRIPFEED_POST_REVEAL_ANYWHERE:-0}" != 1 ] && ! df_on_mister; then
     df_log "POST_REVEAL_CMD not run: this is not the MiSTer itself ($count revealed, $hidden hidden, $returned returned)"
     return 0
   fi
@@ -1993,7 +2009,26 @@ df_gotm_clear() {   # remove Dripfeed's GOT'eM folders; leave anything else alon
 
 # Build ONE Game of the Month folder.  $1=folder base  $2=pick path  $3=custom label
 # Returns 1 if the pick exists but its file isn't on disk yet (caller retries later).
+# A folder is rebuilt on every pass while the OTHER folder waits for its pick, so its
+# system-folder shortcuts count as changed only when they really differ afterwards.
 df_gotm_build() {
+  local gbase before after rc line rel
+  gbase="$(df_showcase_sanitize "$1")"
+  before="$(df_gotm_mirror_snapshot "$gbase")"
+  DF_GOTM_QUIET=1; df_gotm_build_folder "$@"; rc=$?; DF_GOTM_QUIET=0
+  after="$(df_gotm_mirror_snapshot "$gbase")"
+  if [ "$before" != "$after" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      rel="${line%%$'\t'*}"; rel="${rel#"$GAMES_DIR"/}"; df_pass_changed "${rel%%/*}"
+    done <<EOF_GOTM_SNAP
+$before
+$after
+EOF_GOTM_SNAP
+  fi
+  return "$rc"
+}
+df_gotm_build_folder() {
   local base label dir want="$2" custom="$3" target
   base="$(df_showcase_sanitize "$1")"
   label="$(df_gotm_label "$base")"
@@ -2707,7 +2742,7 @@ df_add() {
   # Look every file up in ONE awk pass over a one-walk index of this system's
   # queue (the old per-file rescans spawned processes quadratically).
   local idx="$DF_STATE/.add-index.$$" req="$DF_STATE/.add-req.$$" ann="$DF_STATE/.add-ann.$$"
-  local f base n=0 i=0 count existing first rc
+  local f base n=0 i=0 count existing first rc src
   local files=() clean=() queued=()
   for f in "$@"; do
     while [ "${#f}" -gt 1 ] && [ "${f%/}" != "$f" ]; do f="${f%/}"; done   # "Game Folder/" -> "Game Folder"
@@ -2753,7 +2788,10 @@ df_add() {
     df_rename "$f" "$stage/${d}_${base}"; rc=$?
     case "$rc" in
       0) echo "  scheduled $d  [$sys]  $base"; n=$((n+1)); queued[$((i-1))]=1
-         case "$f" in "$STAGING_ROOT"/*) ;; *) df_pass_hidden "$sys" ;; esac ;;   # re-dating moves nothing in sight
+         # Counted under the system folder the game LEFT; a file staged from outside
+         # games/ (or re-dated inside the library) changes nothing in sight.
+         src="$f"; case "$src" in /*) ;; *) src="$PWD/$src" ;; esac
+         case "$src" in "$GAMES_DIR"/*/*) src="${src#"$GAMES_DIR"/}"; df_pass_hidden "${src%%/*}" ;; esac ;;
       2) echo "  HELD (on a different drive than the waiting library; Dripfeed never copies games): $f" ;;
       *) echo "  FAILED: $f" ;;
     esac

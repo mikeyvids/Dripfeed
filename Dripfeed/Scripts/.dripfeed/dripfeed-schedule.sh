@@ -42,7 +42,7 @@ df_add() {
   # Look every file up in ONE awk pass over a one-walk index of this system's
   # queue (the old per-file rescans spawned processes quadratically).
   local idx="$DF_STATE/.add-index.$$" req="$DF_STATE/.add-req.$$" ann="$DF_STATE/.add-ann.$$"
-  local f base n=0 i=0 count existing first rc
+  local f base n=0 i=0 count existing first rc src
   local files=() clean=() queued=()
   for f in "$@"; do
     while [ "${#f}" -gt 1 ] && [ "${f%/}" != "$f" ]; do f="${f%/}"; done   # "Game Folder/" -> "Game Folder"
@@ -88,7 +88,10 @@ df_add() {
     df_rename "$f" "$stage/${d}_${base}"; rc=$?
     case "$rc" in
       0) echo "  scheduled $d  [$sys]  $base"; n=$((n+1)); queued[$((i-1))]=1
-         case "$f" in "$STAGING_ROOT"/*) ;; *) df_pass_hidden "$sys" ;; esac ;;   # re-dating moves nothing in sight
+         # Counted under the system folder the game LEFT; a file staged from outside
+         # games/ (or re-dated inside the library) changes nothing in sight.
+         src="$f"; case "$src" in /*) ;; *) src="$PWD/$src" ;; esac
+         case "$src" in "$GAMES_DIR"/*/*) src="${src#"$GAMES_DIR"/}"; df_pass_hidden "${src%%/*}" ;; esac ;;
       2) echo "  HELD (on a different drive than the waiting library; Dripfeed never copies games): $f" ;;
       *) echo "  FAILED: $f" ;;
     esac

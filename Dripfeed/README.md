@@ -356,7 +356,9 @@ are checked when read: a missing, non-numeric, or too-small number (for example
   GOT'eM). A run that changed nothing does not call it, and it only runs on the
   MiSTer itself (never when you use the command-line scheduler on a computer with
   the card mounted). At boot, games hidden
-  before the first reveal share one call with that reveal. It runs through `sh -c`
+  before the first reveal share one call with that reveal when it runs right after
+  `BOOT_DELAY`; if it can't (clock not set yet, `REVEAL_AT_BOOT=0`), they get their
+  own call then. It runs through `sh -c`
   with a 120-second time limit, never from the shutdown path. Its output goes to
   `Scripts/.dripfeed/post_reveal.log` and its exit status to `dripfeed.log`. The
   command can read `DRIPFEED_REVEALED_COUNT`, `DRIPFEED_HIDDEN_COUNT`,
