@@ -61,7 +61,7 @@ df_add() {
   while IFS="$DF_US" read -r count existing first; do
     f="${files[$i]}"; base="${clean[$i]}"; i=$((i+1))
     [ -e "$f" ] || [ -L "$f" ] || { echo "  skip (not found): $f"; continue; }
-    if df_is_shortcut_dir "$f" && [ -d "$f" ]; then
+    if df_is_generated_dir "$f" && [ -d "$f" ]; then
       echo "  skip (Dripfeed's own shortcut folder, not a game): $base"; continue
     fi
     if df_support_entry "$f"; then
@@ -192,7 +192,7 @@ df_menu() {
   for f in "$sysdir"/*; do
     [ -e "$f" ] || continue
     [ "${f##*/}" = "$STAGE_DIRNAME" ] && continue
-    df_is_shortcut_dir "$f" && continue
+    df_is_generated_dir "$f" && continue
     df_support_entry "$f" && continue
     files+=("${f##*/}")
   done

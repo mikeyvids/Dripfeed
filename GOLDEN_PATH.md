@@ -52,6 +52,11 @@ verified, complete these checks on a backed-up or disposable card.
   shortcuts launch. Confirm the stock core file browser shows that folder without
   breaking normal browsing. Set it back to `0` and confirm the next run removes
   every `_Dripfeed New` folder; run Undrip once with it on and confirm the same.
+- With `SYSTEM_SHORTCUTS=1`, pick a console GOT'eM game for this month, run
+  Scripts → Dripfeed (or `--gotm`), refresh the frontend, and confirm
+  `games/<SYSTEM>/_Game of the Month/` shows it and the shortcut launches. Change
+  the pick and confirm the old shortcut is gone; set the option to `0` and confirm
+  the folder is removed on the next run.
 - Interrupt power once only on a disposable card, then confirm the next boot logs
   `RECOVERED reveal after interruption` and creates no duplicate.
 

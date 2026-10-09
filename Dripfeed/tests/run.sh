@@ -487,7 +487,8 @@ chk "list is sorted by date across the current and legacy queues" '[ "$LIST" = "
 scratch NOBOOT; printf '#!/bin/sh\n: > "%s/rebooted"\n' "$NOBOOT" > "$NOBOOT/reboot"; chmod +x "$NOBOOT/reboot"
 newcard CZ; rm -rf "$CZ/Scripts/.dripfeed"; cp "$HERE/../Scripts/Dripfeed.sh" "$CZ/Scripts/Dripfeed.sh"
 LOUT="$(PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Dripfeed.sh" </dev/null 2>&1)"
-chk "launcher outside MiSTer installs but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ "$(cat "$CZ/Scripts/.dripfeed/.version")" = "1.4.0" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+LVER="$(grep -m1 '^DRIPFEED_VERSION=' "$HERE/../Scripts/Dripfeed.sh" | cut -d'"' -f2)"
+chk "launcher outside MiSTer installs but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ "$(cat "$CZ/Scripts/.dripfeed/.version")" = "$LVER" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
 LOUT="$(printf x | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
 chk "Undrip.sh outside MiSTer resets but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ ! -d "$CZ/Scripts/.dripfeed" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
 scratch NOCARD; NOWHERE="$NOCARD/not-a-card"
@@ -583,6 +584,43 @@ SC_N="$(ls "$CN/$(cat "$CN/Scripts/.dripfeed/showcase_name")"/*.mgl | wc -l | tr
 chk "switching it on again backfills from What's New" '[ "$(ls "$CN"/games/*/"$SD"/*.mgl 2>/dev/null | wc -l | tr -d " ")" -eq "$SC_N" ] && [ "$SC_N" -gt 0 ]'
 eng "$CN" --undrip >/dev/null 2>&1
 chk "Undrip removes the per-system shortcut folders" '[ -z "$(ls -d "$CN"/games/*/"$SD" 2>/dev/null)" ] && [ -f "$CN/games/SNES/Charlie.sfc" ]'
+
+echo "== SYSTEM_SHORTCUTS also mirrors GOT'eM picks into their system folder =="
+newcard CG; mkdir -p "$CG/games/SNES" "$CG/games/NES" "$CG/_Arcade/cores"
+G="_Game of the Month"; GREC="$CG/Scripts/.dripfeed/gotm_system_shortcuts"
+echo p > "$CG/games/SNES/Pick One.sfc"; echo q > "$CG/games/NES/Pick Two.nes"
+printf '%s\tgames/SNES/Pick One.sfc\n' "$MONTH_NOW" > "$CG/Scripts/.dripfeed/gotm.tsv"
+eng "$CG" --gotm >/dev/null 2>&1
+chk "SYSTEM_SHORTCUTS=0 (default): GOT'eM stays a top-level folder only" '[ -f "$CG/$G/SNES - Pick One.mgl" ] && [ ! -e "$CG/games/SNES/$G" ]'
+printf 'SYSTEM_SHORTCUTS=1\n' >> "$CG/Scripts/.dripfeed/config.ini"
+eng "$CG" --gotm >/dev/null 2>&1
+chk "switching it on backfills this month's pick without waiting for a new month" '[ -f "$CG/games/SNES/$G/Pick One.mgl" ] && grep -q "path=\"$CG/games/SNES/Pick One.sfc\"" "$CG/games/SNES/$G/Pick One.mgl" && grep -qF "$CG/games/SNES/$G/Pick One.mgl" "$GREC"'
+printf '%s\tgames/NES/Pick Two.nes\tFamily Pick\n' "$MONTH_NOW" > "$CG/Scripts/.dripfeed/gotm.tsv"
+eng "$CG" --gotm >/dev/null 2>&1
+chk "a new pick replaces the old system shortcut (and its emptied folder); a custom label names it" '[ ! -e "$CG/games/SNES/$G" ] && [ -f "$CG/games/NES/$G/Family Pick.mgl" ] && [ -f "$CG/games/SNES/Pick One.sfc" ]'
+echo '<misterromdescription><rbf>testcore</rbf></misterromdescription>' > "$CG/_Arcade/Arc Pick.mra"; echo c > "$CG/_Arcade/cores/testcore_20240101.rbf"
+printf '%s\t_Arcade/Arc Pick.mra\n' "$MONTH_NOW" > "$CG/Scripts/.dripfeed/gotm.tsv"
+eng "$CG" --gotm >/dev/null 2>&1
+chk "an arcade pick has no system folder: none is made, and the previous console shortcut is removed" '[ -f "$CG/$G/Arc Pick.mra" ] && [ -z "$(ls -d "$CG"/games/*/"$G" 2>/dev/null)" ]'
+mkdir -p "$CG/games/SNES/$G"; printf 'mine\n' > "$CG/games/SNES/$G/Keep Me.mgl"; echo k > "$CG/games/SNES/Keep Me.sfc"
+printf '%s\tgames/SNES/Keep Me.sfc\n' "$MONTH_NOW" > "$CG/Scripts/.dripfeed/gotm.tsv"
+eng "$CG" --gotm >/dev/null 2>&1
+chk "a same-named file Dripfeed did not write is never replaced or recorded" '[ "$(cat "$CG/games/SNES/$G/Keep Me.mgl")" = mine ] && ! grep -qF "Keep Me.mgl" "$GREC" 2>/dev/null && [ -f "$CG/$G/SNES - Keep Me.mgl" ]'
+printf '%s\tgames/NES/Pick Two.nes\n' "$MONTH_NOW" > "$CG/Scripts/.dripfeed/gotm.tsv"
+printf '%s\tgames/SNES/Pick One.sfc\n' "$MONTH_NOW" > "$CG/community.tsv"; printf 'GOTM_SOURCE=%s\n' "$CG/community.tsv" >> "$CG/Scripts/.dripfeed/config.ini"
+eng "$CG" --gotm >/dev/null 2>&1
+chk "the community pick gets its own folder name in its system folder" '[ -f "$CG/games/NES/$G/Pick Two.mgl" ] && [ -f "$CG/games/SNES/_Discord GOTM/Pick One.mgl" ]'
+GOUT="$(sch "$CG" add NES 2099-01-01 "$CG/games/NES/$G" 2>&1)"
+printf '2099-01-01\tNES\t%s\n' "$G" > "$CG/Scripts/.dripfeed/schedule-requests.tsv"; eng "$CG" --auto >/dev/null 2>&1
+chk "a GOT'eM system folder is never scheduled (browser request or CLI)" '[ -f "$CG/games/NES/$G/Pick Two.mgl" ] && [ ! -e "$CG/.dripfeed-library/NES/2099-01-01_$G" ] && printf "%s\n" "$GOUT" | grep -q "shortcut folder"'
+sed_in_place 's/^SYSTEM_SHORTCUTS=1$/SYSTEM_SHORTCUTS=0/' "$CG/Scripts/.dripfeed/config.ini"
+eng "$CG" --auto >/dev/null 2>&1
+chk "switching SYSTEM_SHORTCUTS off removes Dripfeed's GOT'eM shortcuts only (top-level GOT'eM and user files stay)" '[ ! -e "$CG/games/NES/$G" ] && [ ! -e "$CG/games/SNES/_Discord GOTM" ] && [ "$(cat "$CG/games/SNES/$G/Keep Me.mgl")" = mine ] && [ -d "$CG/$G" ] && [ ! -e "$GREC" ]'
+sed_in_place 's/^SYSTEM_SHORTCUTS=0$/SYSTEM_SHORTCUTS=1/' "$CG/Scripts/.dripfeed/config.ini"
+eng "$CG" --auto >/dev/null 2>&1
+chk "switching it on again restores them on the next pass" '[ -f "$CG/games/NES/$G/Pick Two.mgl" ] && [ -f "$CG/games/SNES/_Discord GOTM/Pick One.mgl" ]'
+eng "$CG" --undrip >/dev/null 2>&1
+chk "Undrip removes GOT'eM system shortcuts and leaves games and the user's file" '[ ! -e "$CG/games/NES/$G" ] && [ ! -e "$CG/games/SNES/_Discord GOTM" ] && [ "$(cat "$CG/games/SNES/$G/Keep Me.mgl")" = mine ] && [ -f "$CG/games/NES/Pick Two.nes" ] && [ -f "$CG/games/SNES/Pick One.sfc" ]'
 
 echo "== POST_REVEAL_CMD: once per pass that revealed games, with a timeout =="
 newcard CQ; mkdir -p "$CQ/games/SNES" "$CQ/games/NES"

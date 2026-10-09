@@ -105,7 +105,7 @@ function loadIcsSection() {
 function loadGuards() {
   const ctx = { Promise, Set };
   vm.runInNewContext(`${slice("let showSysFiles=false;", "// Scan one system into a NEW array")}
-    this.api={isPlayableFile,isSystemFile,inspectFolder,classifyEntry,INSPECT_BUDGET,setShortcutDir:v=>{SYS_SHORTCUTS_DIR=v;}};`, ctx, { filename: "Dripfeed-Scheduler.guards.js" });
+    this.api={isPlayableFile,isSystemFile,inspectFolder,classifyEntry,INSPECT_BUDGET,setShortcutDir:v=>{SYS_SHORTCUTS_DIR=v;},setGotmDirs:v=>{GOTM_DIR_NAMES=v;},gotmFolderName};`, ctx, { filename: "Dripfeed-Scheduler.guards.js" });
   return ctx.api;
 }
 const ledgerText = (dir, name) => dir.files.has(name) ? dir.files.get(name) : null;
@@ -472,6 +472,17 @@ test("folder inspection: Dripfeed's own system shortcut folder is never a game",
   g.setShortcutDir("_My New Games");
   assert.strictEqual(g.isSystemFile("_My New Games", "directory"), true);
   assert.strictEqual(g.isSystemFile("_Dripfeed New", "directory"), true, "the default name stays guarded");
+});
+
+test("folder inspection: GOT'eM folders inside system folders are never games", async () => {
+  const g = loadGuards(); const f = makeFs();
+  const gm = new f.DirH("_Game of the Month"); gm.files.set("Pick.mgl", "<mistergamedescription/>");
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(await g.classifyEntry("_Game of the Month", gm))), { sysfile: true, reason: "Dripfeed shortcut folder" });
+  for (const n of ["_game of the month", "_Game of the Month - Oct", "_Discord GOTM", "_Discord GOTM - Jan"]) assert.strictEqual(g.isSystemFile(n, "directory"), true, n);
+  assert.strictEqual(g.isSystemFile("_Game of the Monthly Hacks", "directory"), false, "only the name or the name plus a month suffix");
+  g.setGotmDirs(["_Game of the Month", "_Discord GOTM", g.gotmFolderName("Family Picks")]);
+  assert.strictEqual(g.isSystemFile("_Family Picks", "directory"), true, "a configured name is sanitized like the engine's");
+  assert.strictEqual(g.gotmFolderName('Bad:<Name>?  Here'), "_BadName Here");
 });
 
 test("folder inspection stops at the first playable image and caps deep data trees", async () => {

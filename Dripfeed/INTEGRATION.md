@@ -100,6 +100,12 @@ reader of standard files. What to expect:
 
   The games never move into this folder; it holds only small shortcuts that point
   at the real files.
+- **The same option covers GOT'eM.** A console or computer Game of the Month pick
+  also gets a shortcut in `games/<SYSTEM>/_Game of the Month/` (the community pick
+  in `_Discord GOTM`; both follow your GOT'eM folder names). It changes with the
+  month, and is removed when the option is switched off and by Undrip. Arcade
+  picks stay in the top-level GOT'eM folder only, because arcade games have no
+  system folder under `games/`. Only shortcuts Dripfeed wrote are ever removed.
 
 ## Where games must live
 

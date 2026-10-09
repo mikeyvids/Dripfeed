@@ -121,10 +121,10 @@
           <input id="cfgGotmOn" type="checkbox" checked> build GOT'eM (Game of the Month) folder(s)
         </label>
         <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)">
-          <input id="cfgSysShortcuts" type="checkbox"> also add What's New shortcuts inside each system folder
+          <input id="cfgSysShortcuts" type="checkbox"> also add What's New and GOT'eM shortcuts inside each system folder
         </label>
       </div>
-      <p class="sub" style="font-size:12px;margin:4px 0 0">Use either, both, or neither — scheduling and reveals work regardless; these only control the menu folders Dripfeed builds. The system-folder option (off by default) adds small <code>.mgl</code> shortcuts in <code>games/&lt;system&gt;/_Dripfeed New</code> for graphical frontends that build their own library from system folders; the games themselves never move there. Turning it off removes those folders on the next run.</p>
+      <p class="sub" style="font-size:12px;margin:4px 0 0">Use either, both, or neither — scheduling and reveals work regardless; these only control the menu folders Dripfeed builds. The system-folder option (off by default) adds small <code>.mgl</code> shortcuts in <code>games/&lt;system&gt;/_Dripfeed New</code> (and a console GOT'eM pick in <code>games/&lt;system&gt;/_Game of the Month</code>) for graphical frontends that build their own library from system folders; the games themselves never move there. Turning it off removes those folders on the next run.</p>
       <div class="row" style="margin-top:16px;align-items:flex-end;flex-wrap:wrap;gap:10px">
         <div style="flex:0 0 240px">
           <label>Dripfeed menu folder name</label>
@@ -657,7 +657,12 @@ function isPlayableFile(name){
 // "_Dripfeed New") is generated output, never a game: neither scheduler may
 // queue it. Matched without case, as the engine's df_is_shortcut_dir does.
 let SYS_SHORTCUTS_DIR="_Dripfeed New";
-function isShortcutDir(name){const n=String(name||"").toLowerCase();return n==="_dripfeed new"||n===SYS_SHORTCUTS_DIR.toLowerCase();}
+// GOT'eM folders the engine may write inside system folders (SYSTEM_SHORTCUTS=1):
+// configured and default names, with or without a " - Mon" suffix (df_is_gotm_dir).
+let GOTM_DIR_NAMES=["_Game of the Month","_Discord GOTM"];
+function isShortcutDir(name){const n=String(name||"").toLowerCase();return n==="_dripfeed new"||n===SYS_SHORTCUTS_DIR.toLowerCase()||GOTM_DIR_NAMES.some(b=>{const g=b.toLowerCase();return n===g||n.startsWith(g+" - ");});}
+// The engine's df_showcase_sanitize: drop unsafe characters, collapse spaces, lead with "_".
+function gotmFolderName(v,max=30){let n=String(v||"").replace(/[<>:"\/\\|?*]/g,"").replace(/[^\t\x20-\x7e]/g,"").replace(/ +/g," ").trim();if(!n.startsWith("_"))n="_"+n;if(n.length>max)n=n.slice(0,max).trimEnd();return n==="_"?"":n;}
 function isSystemFile(name,kind){
   const n=name.toLowerCase();
   if(kind==="directory") return SYSFILE_DIRS.has(n)||isShortcutDir(n);
@@ -1507,6 +1512,8 @@ async function cfgLoad(){
   // Same cleaning as the engine's df_cfg_dirname, so both sides guard one name.
   const scDir=(get("SYSTEM_SHORTCUTS_DIR")||"").replace(/[<>:"\/\\|?*]/g,"").trim();
   SYS_SHORTCUTS_DIR=scDir&&!scDir.startsWith(".")?scDir:"_Dripfeed New";
+  const maxLen=Math.max(8,parseInt(get("SHOWCASE_MAXLEN")??"30",10)||30);
+  GOTM_DIR_NAMES=["_Game of the Month","_Discord GOTM",...[get("GOTM_DIRNAME"),get("GOTM_SRC_DIRNAME")].filter(Boolean).map(v=>gotmFolderName(v,maxLen)).filter(Boolean)];
   cfgUpdateLimits();
 }
 $("#cfgApply").onclick=async()=>{

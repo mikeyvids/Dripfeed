@@ -32,7 +32,8 @@ SHOWCASE_KEEP=12     # max shortcuts kept in that folder (and in each system fol
 GAMELIST=1           # write gamelist.xml in the showcase (full message rides here)
 FAVORITES_MIRROR=0   # opt-in: also mirror shortcuts into _@Favorites/_Dripfeed New
 FAVORITES_DIR=_@Favorites
-SYSTEM_SHORTCUTS=0   # opt-in: also put each What's New shortcut in games/<SYSTEM>/<dir below>,
+SYSTEM_SHORTCUTS=0   # opt-in: also put each What's New shortcut in games/<SYSTEM>/<dir below>
+                     # and a console GOT'eM pick in games/<SYSTEM>/<GOT'eM folder name>,
                      # for graphical frontends that build their own library from system
                      # folders (refresh that library to see them). 0 removes them again.
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"

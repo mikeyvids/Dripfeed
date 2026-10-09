@@ -21,9 +21,10 @@
 - Adds disposable-card coverage plus real-adapter, controller, DHCP, hotspot,
   hidden-network, and power-interruption steps to the Golden Path.
 
-# Dripfeed + GOT'eM 1.4.0
+# Dripfeed + GOT'eM 1.4.1
 
-Large libraries, large games, and graphical frontends. Full details are in
+Large libraries, large games, and graphical frontends, including GOT'eM picks in
+system folders. Full details are in
 [`Dripfeed/CHANGELOG.md`](Dripfeed/CHANGELOG.md).
 
 ## Highlights
@@ -47,7 +48,8 @@ Large libraries, large games, and graphical frontends. Full details are in
   core; `gamelist.xml` is valid and carries real reveal dates.
 - **Graphical frontends.** Plain-language guidance for frontends that build their
   own library from system folders, plus three standard-file options:
-  `SYSTEM_SHORTCUTS` (opt-in per-system `_Dripfeed New` shortcut folders),
+  `SYSTEM_SHORTCUTS` (opt-in per-system `_Dripfeed New` shortcut folders, plus
+  the GOT'eM pick in `games/<SYSTEM>/_Game of the Month/`),
   `POST_REVEAL_CMD` (run a refresh command you supply after a reveal), and
   `TOUCH_ON_REVEAL` (a revealed file's date shows its reveal time). Dripfeed
   still never writes to a frontend's database, settings, or binaries.

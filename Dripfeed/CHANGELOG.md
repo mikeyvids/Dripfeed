@@ -1,5 +1,24 @@
 # Changelog — Dripfeed
 
+## 1.4.1 — 2026-10-09
+
+- **GOT'eM picks in system folders too.** With `SYSTEM_SHORTCUTS=1`, a console
+  or computer Game of the Month pick also gets a shortcut in
+  `games/<SYSTEM>/_Game of the Month/` (the community pick in its own
+  `_Discord GOTM` folder; both follow `GOTM_DIRNAME`/`GOTM_SRC_DIRNAME`), so
+  frontends that only read system folders can show it. It follows the monthly
+  change, appears as soon as a scheduled pick is revealed, is backfilled when the
+  option is switched on, and is removed when it is switched off and by Undrip.
+  GOT'eM picks are often games Dripfeed never revealed, so every shortcut written
+  there is recorded in `Scripts/.dripfeed/gotm_system_shortcuts` and only those
+  files are ever removed; a same-named file Dripfeed did not write is never
+  replaced. Arcade picks have no system folder under `games/` and stay in the
+  top-level GOT'eM folder only.
+- These GOT'eM folders inside system folders are never scheduled or listed as
+  games, by the CLI, browser requests or the browser scheduler.
+- 1.4.0 was a test build that was never published; this entry and 1.4.0's below
+  together describe the changes since 1.3.2.
+
 ## 1.4.0 — 2026-10-09
 
 Large libraries, large games, and graphical frontends. Open `Dripfeed.sh` once

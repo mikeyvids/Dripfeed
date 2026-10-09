@@ -9,7 +9,7 @@
 # its helpers + boot hook, maintains ONE dated "What's New" menu folder whose name only
 # changes when games actually unlock. See CHANGELOG.md.
 
-DRIPFEED_VERSION="1.4.0"
+DRIPFEED_VERSION="1.4.1"
 DRIPFEED_ROOT="${DRIPFEED_ROOT:-/media/fat}"
 HELP="$DRIPFEED_ROOT/Scripts/.dripfeed"
 export DRIPFEED_INTERACTIVE=1
@@ -79,6 +79,8 @@ DF_SHOWNAMES="$DF_STATE/showcase_names"  # record of EVERY showcase name ever st
                                          # exactly what Dripfeed created
 DF_SYSDIRS="$DF_STATE/system_shortcut_dirs"   # record of per-system shortcut folder names
 DF_GOTM_NAMES="$DF_STATE/gotm_names"     # record of Game of the Month folders built
+DF_GOTM_MIRRORS="$DF_STATE/gotm_system_shortcuts"   # GOT'eM shortcuts put in system folders
+                                         # ("<folder base><TAB><file>"); only these are removed
 DF_WATCHPID="$DF_STATE/watch.pid"        # the boot watcher (pid, boot id)
 DF_POSTLOG="$DF_STATE/post_reveal.log"   # output of the last POST_REVEAL_CMD run
 DF_GOTM="$DF_STATE/gotm.tsv"             # Game of the Month schedule: YYYY-MM<TAB>path
@@ -124,7 +126,8 @@ FAVORITES_MIRROR=0     # (opt-in) also copy shortcuts into the stock-menu Favori
                        # always into the ONE subfolder _@Favorites/_Dripfeed New.
 FAVORITES_DIR="_@Favorites"
 SYSTEM_SHORTCUTS=0     # (opt-in) also mirror each What's New shortcut into
-                       # games/<SYSTEM>/<SYSTEM_SHORTCUTS_DIR>/ — standard .mgl files that
+                       # games/<SYSTEM>/<SYSTEM_SHORTCUTS_DIR>/, and a console GOT'eM pick
+                       # into games/<SYSTEM>/<GOT'eM folder name>/ — standard .mgl files that
                        # graphical frontends which build their own library from system
                        # folders can list after their library is refreshed.
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"
@@ -236,6 +239,7 @@ df_load_config() {
   df_cfg_flag GOTM 1; df_cfg_flag GOTM_MONTH 0; df_cfg_flag SYSTEM_SHORTCUTS 0
   df_cfg_flag TOUCH_ON_REVEAL 1
   df_cfg_dirname SYSTEM_SHORTCUTS_DIR "_Dripfeed New"
+  DF_GOTM_DIRS=()   # GOT'eM folder names follow the config just read
   df_cfg_dirname FAVORITES_DIR "_@Favorites"
   case "$STAGE_DIRNAME" in ''|*/*|.|..) STAGE_DIRNAME=".dripfeed" ;; esac
 }
@@ -699,6 +703,25 @@ df_is_shortcut_dir() {
   [ "$nc" -eq 1 ] || shopt -u nocasematch
   return "$rc"
 }
+# GOT'eM folders Dripfeed may write inside system folders (SYSTEM_SHORTCUTS=1): the
+# configured and default folder names, with or without a " - Mon" suffix.
+DF_GOTM_DIRS=()   # filled once per process (callers loop over every game; no fork per call)
+df_is_gotm_dir() {
+  local n="${1##*/}" b rc=1 nc=0
+  [ -n "$n" ] || return 1
+  if [ "${#DF_GOTM_DIRS[@]}" -eq 0 ]; then
+    DF_GOTM_DIRS=("$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")" "$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")" "_Game of the Month" "_Discord GOTM")
+  fi
+  shopt -q nocasematch && nc=1
+  shopt -s nocasematch
+  for b in "${DF_GOTM_DIRS[@]}"; do
+    if [ -n "$b" ] && { [[ "$n" == "$b" ]] || [[ "$n" == "$b - "* ]]; }; then rc=0; break; fi
+  done
+  [ "$nc" -eq 1 ] || shopt -u nocasematch
+  return "$rc"
+}
+# Generated folders inside a system folder are never games: never scheduled or listed.
+df_is_generated_dir() { df_is_shortcut_dir "$1" || df_is_gotm_dir "$1"; }
 
 df_occasion() {
   [ -f "$DF_OCCASIONS" ] || return 0
@@ -1325,6 +1348,7 @@ EOF_SCAN
 }
 df_system_shortcuts_finalize() {
   local d name m label sys path rel title kind keep="${SHOWCASE_KEEP:-12}" files mine
+  [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] || df_gotm_mirror_clear ""   # switched off or Undrip: GOT'eM ones too
   # Folder names Dripfeed has used: the current one, the default, the record.
   set -- "$SYSTEM_SHORTCUTS_DIR" "_Dripfeed New"
   if [ -f "$DF_SYSDIRS" ]; then
@@ -1384,6 +1408,70 @@ EOF_SCAN
     rmdir "$d" 2>/dev/null || true      # an empty shortcut folder is not left behind
   done
   return 0
+}
+
+
+# ---- (opt-in) GOT'eM picks inside system folders ------------------------------------
+# With SYSTEM_SHORTCUTS=1, a console/computer GOT'eM pick also gets a shortcut in
+# games/<SYSTEM>/<GOT'eM folder name>/, so frontends that only read system folders can
+# show it. GOT'eM picks are often games Dripfeed never revealed, so ownership cannot
+# come from the reveal ledger: every file written here is listed in $DF_GOTM_MIRRORS
+# and only listed files are ever removed. A file of the same name that Dripfeed did
+# not write is never replaced. Arcade picks (.mra) have no system folder under games/
+# and are not mirrored.
+df_gotm_label() {   # $1 = sanitized folder base -> the folder name GOT'eM uses this month
+  if [ "${GOTM_MONTH:-0}" -eq 1 ]; then df_showcase_sanitize "$1 - $(date +%b)"; else printf '%s\n' "$1"; fi
+}
+df_gotm_mirror_clear() {   # $1 = GOT'eM folder base to clear; empty = every one
+  [ -f "$DF_GOTM_MIRRORS" ] || return 0
+  local want="$1" base f dir keep=""
+  while IFS=$'\t' read -r base f || [ -n "$base" ]; do
+    [ -n "$f" ] || continue
+    if [ -n "$want" ] && [ "$base" != "$want" ]; then keep="$keep$base"$'\t'"$f"$'\n'; continue; fi
+    case "$f" in "$GAMES_DIR"/*/*/*.mgl) ;; *) continue ;; esac
+    [ -f "$f" ] && rm -f "$f"
+    dir="${f%/*}"; rm -f "$dir/.DS_Store" "$dir"/._* 2>/dev/null
+    rmdir "$dir" 2>/dev/null && df_log "removed GOT'eM system shortcut folder: ${dir#"$GAMES_DIR"/}"
+  done < "$DF_GOTM_MIRRORS"
+  if [ -n "$keep" ]; then printf '%s' "$keep" > "$DF_GOTM_MIRRORS"; else rm -f "$DF_GOTM_MIRRORS"; fi
+  return 0
+}
+df_gotm_mirror_add() {     # $1 = folder base  $2 = folder label  $3 = pick (relative to /media/fat)  $4 = custom label
+  [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] || return 0
+  local base="$1" label="$2" want="$3" custom="${4:-}" item rel sys dir title out made=0
+  case "$want" in ''|*.[Mm][Rr][Aa]) return 0 ;; esac
+  item="$DF_ROOT/$want"
+  case "$item" in "$GAMES_DIR"/*/*) ;; *) return 0 ;; esac
+  [ -e "$item" ] || return 0
+  rel="${item#"$GAMES_DIR"/}"; sys="${rel%%/*}"
+  [ -d "$GAMES_DIR/$sys" ] || return 0
+  if df_is_shortcut_dir "$label"; then
+    df_log "GOTM ($base): '$label' is also the What's New system folder - GOT'eM not mirrored into system folders"; return 0
+  fi
+  title="${item##*/}"; [ -d "$item" ] || title="${title%.*}"
+  [ -n "$custom" ] && title="$custom"
+  title="${title//[<>:\"\/\\|?*]/}"
+  [ -n "$title" ] || return 0
+  dir="$GAMES_DIR/$sys/$label"; out="$dir/$title.mgl"
+  if [ -e "$out" ] && ! grep -qxF -- "$base"$'\t'"$out" "$DF_GOTM_MIRRORS" 2>/dev/null; then
+    df_log "GOTM ($base): kept ${out#"$GAMES_DIR"/} (Dripfeed did not create it) - no system shortcut"; return 0
+  fi
+  [ -d "$dir" ] || made=1
+  if df_make_mgl "$dir" "$sys" "$item" "$title"; then
+    grep -qxF -- "$base"$'\t'"$out" "$DF_GOTM_MIRRORS" 2>/dev/null || printf '%s\t%s\n' "$base" "$out" >> "$DF_GOTM_MIRRORS"
+    df_log "GOTM ($base): system shortcut ${out#"$GAMES_DIR"/}"
+  elif [ "$made" -eq 1 ]; then
+    rmdir "$dir" 2>/dev/null
+  fi
+  return 0
+}
+df_gotm_mirror_ensure() {  # same arguments; adds the shortcut only if this folder has none yet
+  [ "${SYSTEM_SHORTCUTS:-0}" -eq 1 ] && [ -n "${3:-}" ] || return 0
+  local b f
+  if [ -f "$DF_GOTM_MIRRORS" ]; then
+    while IFS=$'\t' read -r b f || [ -n "$b" ]; do [ "$b" = "$1" ] && [ -f "$f" ] && return 0; done < "$DF_GOTM_MIRRORS"
+  fi
+  df_gotm_mirror_add "$@"
 }
 
 # ---- Optional command after a pass that revealed games ------------------------------
@@ -1584,7 +1672,7 @@ df_process_schedule_requests() {
     fi
     [ -z "$sup" ] || { df_log "BROWSER SCHEDULE earlier row superseded: $d $sys/$name"; continue; }
     source="$GAMES_DIR/$sys/$name"; stage="$STAGING_ROOT/$sys"; dest="$stage/${d}_$name"
-    if df_is_shortcut_dir "$name"; then
+    if df_is_generated_dir "$name"; then
       df_log "SKIP browser request for Dripfeed's own shortcut folder: $sys/$name"; continue
     fi
     if [ -e "$source" ] && df_support_entry "$source"; then
@@ -1839,11 +1927,11 @@ df_gotm_clear() {   # remove Dripfeed's GOT'eM folders; leave anything else alon
 df_gotm_build() {
   local base label dir want="$2" custom="$3" target
   base="$(df_showcase_sanitize "$1")"
-  label="$base"
-  [ "${GOTM_MONTH:-0}" -eq 1 ] && label="$(df_showcase_sanitize "$base - $(date +%b)")"
+  label="$(df_gotm_label "$base")"
   dir="$DF_ROOT/$label"
   if [ -z "$want" ]; then                       # no pick: clear this folder family
     df_gotm_clear "$dir" "$DF_ROOT/$base" "$DF_ROOT/$base - "*
+    df_gotm_mirror_clear "$base"
     return 0
   fi
   target="$DF_ROOT/$want"
@@ -1853,6 +1941,7 @@ df_gotm_build() {
   fi
   # replace, never duplicate: clear this month's name AND any older-month leftovers
   df_gotm_clear "$dir" "$DF_ROOT/$base" "$DF_ROOT/$base - "*
+  df_gotm_mirror_clear "$base"
   if [ -e "$dir" ]; then
     df_log "GOTM ($base): cannot use '$label' as the Game of the Month folder - choose another name"
     return 0
@@ -1883,6 +1972,7 @@ df_gotm_build() {
         return 0
       fi ;;
   esac
+  df_gotm_mirror_add "$base" "$label" "$want" "$custom"   # SYSTEM_SHORTCUTS=1 only
   df_log "GOTM built ($base): $want"
   return 0
 }
@@ -1897,7 +1987,18 @@ df_gotm_update() {
   u="$(df_gotm_user_pick "$month")"; upick="${u%%$TAB*}"; ulabel="${u#*$TAB}"; [ "$ulabel" = "$u" ] && ulabel=""
   s="$(df_gotm_src_pick "$month")";  spick="${s%%$TAB*}"; slabel="${s#*$TAB}"; [ "$slabel" = "$s" ] && slabel=""
   cur=$(cat "$DF_GOTM_LAST" 2>/dev/null)
-  [ "$cur" = "$month|$upick|$spick" ] && return 0
+  if [ "$cur" = "$month|$upick|$spick" ]; then
+    # Unchanged picks: only add system-folder shortcuts that are missing (for
+    # example right after SYSTEM_SHORTCUTS was switched on).
+    local gb sb
+    gb="$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")"
+    df_gotm_mirror_ensure "$gb" "$(df_gotm_label "$gb")" "$upick" "$ulabel"
+    if [ -n "${GOTM_SOURCE:-}" ]; then
+      sb="$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")"
+      df_gotm_mirror_ensure "$sb" "$(df_gotm_label "$sb")" "$spick" "$slabel"
+    fi
+    return 0
+  fi
   df_gotm_build "${GOTM_DIRNAME:-_Game of the Month}" "$upick" "$ulabel" || ok=1
   if [ -n "${GOTM_SOURCE:-}" ]; then
     df_gotm_build "${GOTM_SRC_DIRNAME:-_Discord GOTM}" "$spick" "$slabel" || ok=1
@@ -2382,7 +2483,8 @@ SHOWCASE_KEEP=12     # max shortcuts kept in that folder (and in each system fol
 GAMELIST=1           # write gamelist.xml in the showcase (full message rides here)
 FAVORITES_MIRROR=0   # opt-in: also mirror shortcuts into _@Favorites/_Dripfeed New
 FAVORITES_DIR=_@Favorites
-SYSTEM_SHORTCUTS=0   # opt-in: also put each What's New shortcut in games/<SYSTEM>/<dir below>,
+SYSTEM_SHORTCUTS=0   # opt-in: also put each What's New shortcut in games/<SYSTEM>/<dir below>
+                     # and a console GOT'eM pick in games/<SYSTEM>/<GOT'eM folder name>,
                      # for graphical frontends that build their own library from system
                      # folders (refresh that library to see them). 0 removes them again.
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"
@@ -2524,7 +2626,7 @@ df_add() {
   while IFS="$DF_US" read -r count existing first; do
     f="${files[$i]}"; base="${clean[$i]}"; i=$((i+1))
     [ -e "$f" ] || [ -L "$f" ] || { echo "  skip (not found): $f"; continue; }
-    if df_is_shortcut_dir "$f" && [ -d "$f" ]; then
+    if df_is_generated_dir "$f" && [ -d "$f" ]; then
       echo "  skip (Dripfeed's own shortcut folder, not a game): $base"; continue
     fi
     if df_support_entry "$f"; then
@@ -2655,7 +2757,7 @@ df_menu() {
   for f in "$sysdir"/*; do
     [ -e "$f" ] || continue
     [ "${f##*/}" = "$STAGE_DIRNAME" ] && continue
-    df_is_shortcut_dir "$f" && continue
+    df_is_generated_dir "$f" && continue
     df_support_entry "$f" && continue
     files+=("${f##*/}")
   done

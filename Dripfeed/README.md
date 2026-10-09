@@ -234,8 +234,10 @@ settings, so it helps to know how these frontends see the card:
 - **`SYSTEM_SHORTCUTS=1` adds a What's New folder inside each system folder.** Each
   reveal also gets an `.mgl` shortcut in `games/<SYSTEM>/_Dripfeed New/` (name set
   by `SYSTEM_SHORTCUTS_DIR`), named after the game without a system prefix and
-  trimmed to the newest `SHOWCASE_KEEP` per system. The games themselves never move
-  there. Caveats:
+  trimmed to the newest `SHOWCASE_KEEP` per system. A console or computer GOT'eM
+  pick also gets a shortcut in `games/<SYSTEM>/_Game of the Month/` (arcade picks
+  have no system folder there and stay in the top-level GOT'eM folder). The games
+  themselves never move there. Caveats:
   - it is per system, not one list across systems;
   - tools that index `.mgl` files in system folders (search, random-game, and
     attract-mode tools) will list each new game twice: the game and its shortcut;
@@ -321,7 +323,7 @@ STAGING_ROOT=/media/fat/.dripfeed-library
 REVEAL_AT_BOOT=1     # reveal due games at power-on
 DAILY=1              # also reveal once per calendar day while powered on
 WATCH_INTERVAL=3600  # seconds between day-change checks
-SYSTEM_SHORTCUTS=0   # 1 = also put What's New shortcuts inside each system folder
+SYSTEM_SHORTCUTS=0   # 1 = also put What's New and GOT'eM shortcuts inside each system folder
 SYSTEM_SHORTCUTS_DIR="_Dripfeed New"   # that per-system folder's name
 POST_REVEAL_CMD=""   # optional command to run once after a pass that revealed games
 TOUCH_ON_REVEAL=1    # 1 = a revealed game's file date shows when it was revealed
@@ -336,8 +338,10 @@ are checked when read: a missing, non-numeric, or too-small number (for example
 
 - **`SYSTEM_SHORTCUTS`** (default `0`): mirrors each What's New shortcut into
   `games/<SYSTEM>/<SYSTEM_SHORTCUTS_DIR>/` for graphical frontends that build their
-  own library from system folders. Kept to `SHOWCASE_KEEP` per system, removed by
-  Undrip, and removed on the next run after you set it back to `0`. The web
+  own library from system folders, and a console or computer GOT'eM pick into
+  `games/<SYSTEM>/_Game of the Month/` (arcade picks stay top-level). Kept to
+  `SHOWCASE_KEEP` per system, removed by Undrip, and removed on the next run after
+  you set it back to `0`. The web
   scheduler's folder settings include the same switch. Read the caveats in
   [Graphical frontends with their own library](#graphical-frontends-with-their-own-library)
   before turning it on.
@@ -427,6 +431,8 @@ Scripts/.dripfeed/system_shortcut_dirs  per-system shortcut folder names Dripfee
 Scripts/.dripfeed/gotm_names         Game of the Month folders Dripfeed has built
 Scripts/.dripfeed/post_reveal.log    output of the last POST_REVEAL_CMD run
 games/<SYS>/_Dripfeed New/           optional per-system shortcuts (SYSTEM_SHORTCUTS=1 only)
+games/<SYS>/_Game of the Month/      optional GOT'eM pick shortcut (SYSTEM_SHORTCUTS=1 only)
+Scripts/.dripfeed/gotm_system_shortcuts  the GOT'eM shortcuts Dripfeed put in system folders
 ```
 
 The three name records let a later run tidy up old folders and let Undrip remove

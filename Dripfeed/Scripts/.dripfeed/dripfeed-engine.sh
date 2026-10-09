@@ -154,7 +154,7 @@ df_process_schedule_requests() {
     fi
     [ -z "$sup" ] || { df_log "BROWSER SCHEDULE earlier row superseded: $d $sys/$name"; continue; }
     source="$GAMES_DIR/$sys/$name"; stage="$STAGING_ROOT/$sys"; dest="$stage/${d}_$name"
-    if df_is_shortcut_dir "$name"; then
+    if df_is_generated_dir "$name"; then
       df_log "SKIP browser request for Dripfeed's own shortcut folder: $sys/$name"; continue
     fi
     if [ -e "$source" ] && df_support_entry "$source"; then
@@ -409,11 +409,11 @@ df_gotm_clear() {   # remove Dripfeed's GOT'eM folders; leave anything else alon
 df_gotm_build() {
   local base label dir want="$2" custom="$3" target
   base="$(df_showcase_sanitize "$1")"
-  label="$base"
-  [ "${GOTM_MONTH:-0}" -eq 1 ] && label="$(df_showcase_sanitize "$base - $(date +%b)")"
+  label="$(df_gotm_label "$base")"
   dir="$DF_ROOT/$label"
   if [ -z "$want" ]; then                       # no pick: clear this folder family
     df_gotm_clear "$dir" "$DF_ROOT/$base" "$DF_ROOT/$base - "*
+    df_gotm_mirror_clear "$base"
     return 0
   fi
   target="$DF_ROOT/$want"
@@ -423,6 +423,7 @@ df_gotm_build() {
   fi
   # replace, never duplicate: clear this month's name AND any older-month leftovers
   df_gotm_clear "$dir" "$DF_ROOT/$base" "$DF_ROOT/$base - "*
+  df_gotm_mirror_clear "$base"
   if [ -e "$dir" ]; then
     df_log "GOTM ($base): cannot use '$label' as the Game of the Month folder - choose another name"
     return 0
@@ -453,6 +454,7 @@ df_gotm_build() {
         return 0
       fi ;;
   esac
+  df_gotm_mirror_add "$base" "$label" "$want" "$custom"   # SYSTEM_SHORTCUTS=1 only
   df_log "GOTM built ($base): $want"
   return 0
 }
@@ -467,7 +469,18 @@ df_gotm_update() {
   u="$(df_gotm_user_pick "$month")"; upick="${u%%$TAB*}"; ulabel="${u#*$TAB}"; [ "$ulabel" = "$u" ] && ulabel=""
   s="$(df_gotm_src_pick "$month")";  spick="${s%%$TAB*}"; slabel="${s#*$TAB}"; [ "$slabel" = "$s" ] && slabel=""
   cur=$(cat "$DF_GOTM_LAST" 2>/dev/null)
-  [ "$cur" = "$month|$upick|$spick" ] && return 0
+  if [ "$cur" = "$month|$upick|$spick" ]; then
+    # Unchanged picks: only add system-folder shortcuts that are missing (for
+    # example right after SYSTEM_SHORTCUTS was switched on).
+    local gb sb
+    gb="$(df_showcase_sanitize "${GOTM_DIRNAME:-_Game of the Month}")"
+    df_gotm_mirror_ensure "$gb" "$(df_gotm_label "$gb")" "$upick" "$ulabel"
+    if [ -n "${GOTM_SOURCE:-}" ]; then
+      sb="$(df_showcase_sanitize "${GOTM_SRC_DIRNAME:-_Discord GOTM}")"
+      df_gotm_mirror_ensure "$sb" "$(df_gotm_label "$sb")" "$spick" "$slabel"
+    fi
+    return 0
+  fi
   df_gotm_build "${GOTM_DIRNAME:-_Game of the Month}" "$upick" "$ulabel" || ok=1
   if [ -n "${GOTM_SOURCE:-}" ]; then
     df_gotm_build "${GOTM_SRC_DIRNAME:-_Discord GOTM}" "$spick" "$slabel" || ok=1
