@@ -548,12 +548,13 @@ df_lock() {
   if mkdir "$DF_LOCK" 2>/dev/null; then df_lock_take; return 0; fi
   df_lock_stale || return 1
   # Reclaim: rename the stale lock aside first (atomic, only one process wins),
-  # then make sure what we moved is still the lock we judged stale.
-  local snap junk="$DF_LOCK.stale.$$"
-  snap=$(cat "$DF_LOCK/owner" "$DF_LOCK/ts" 2>/dev/null)
+  # then judge the directory we now hold alone AGAIN: another starter may have
+  # reclaimed the stale lock and be running under it since we first looked.
+  local keep="$DF_LOCK" junk="$DF_LOCK.stale.$$" rc
   rm -rf "$junk" 2>/dev/null          # never mv the lock INTO a leftover of a reused pid
   mv "$DF_LOCK" "$junk" 2>/dev/null || return 1
-  if [ "$(cat "$junk/owner" "$junk/ts" 2>/dev/null)" != "$snap" ]; then
+  DF_LOCK="$junk"; df_lock_stale; rc=$?; DF_LOCK="$keep"
+  if [ "$rc" -ne 0 ]; then            # a live holder: give its lock back untouched
     [ -e "$DF_LOCK" ] || mv "$junk" "$DF_LOCK" 2>/dev/null
     return 1
   fi
@@ -589,6 +590,20 @@ df_lock_describe() {
   else echo "held by pid $LOCK_PID, which is gone (will be reclaimed)"; fi
 }
 DF_BUSY_MSG="Dripfeed is busy (a reveal or another change is running). Nothing was changed; try again in a minute."
+# Scratch files carry the pid that made them (.index.<pid>, .requests.<pid>,
+# .revealed.<pid>, schedule-requests.tsv.tmp.<pid> ...). A crash or power cut
+# leaves them behind; at the start of a pass, under the lock, remove the ones
+# whose maker is gone. A live process's files are never touched.
+df_sweep_temp() {
+  local f pid
+  for f in "$DF_STATE"/.index.* "$DF_STATE"/.requests.* "$DF_STATE"/.revealed.* "$DF_STATE"/.recovered.* \
+           "$DF_SCHEDULE_REQUESTS".tmp.* "$DF_UNSCHEDULE_REQUESTS".tmp.*; do
+    [ -f "$f" ] || continue
+    pid="${f##*.}"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    df_pid_alive "$pid" || rm -f "$f" 2>/dev/null
+  done
+}
 
 # ---- Logging (always on, so we can diagnose on real hardware) ---------------
 df_log() {
@@ -766,20 +781,36 @@ df_tx_clear() {
   sync 2>/dev/null || true
 }
 
+# A journal the engine cannot resolve is set aside under its own name, so the
+# next reveal never overwrites it and --diag can list it. Nothing it names is
+# moved or removed.
+df_tx_hold() {
+  local now held
+  df_strftime now '%s'; held="$DF_TX_DIR/held-$now.tsv"
+  [ -e "$held" ] && held="$DF_TX_DIR/held-$now.$$.tsv"
+  mv "$DF_TX_DIR/current.tsv" "$held" 2>/dev/null
+  df_log "RECOVERY HOLD: $1 (journal kept as transactions/${held##*/})"
+}
+
 # Print a recovered reveal as system<TAB>name<TAB>date<TAB>destination. If the
 # move never happened, discard the stale intent and let the normal queue retry.
 # Ambiguous states are deliberately left in place for diagnosis—never delete or
-# overwrite a user's game to guess what happened.
+# overwrite a user's game to guess what happened. Returns 1 for a hold (the pass
+# goes on) and 2 when revealed.tsv could not be written: then the journal stays
+# and the caller ends the pass, so the next one records the reveal.
 df_tx_recover() {
   local tx="$DF_TX_DIR/current.tsv" d sys name src dest
   [ -f "$tx" ] || return 0
   IFS=$'\t' read -r d sys name src dest < "$tx"
   case "$src:$dest" in
     "$STAGING_ROOT"/*:"$GAMES_DIR"/*|"$GAMES_DIR"/*/"$STAGE_DIRNAME"/*:"$GAMES_DIR"/*) ;;
-    *) df_log "RECOVERY HOLD: invalid transaction paths"; return 1 ;;
+    *) df_tx_hold "invalid transaction paths"; return 1 ;;
   esac
   if [ -e "$dest" ] && [ ! -e "$src" ]; then
-    df_ledger_record "$d" "$sys" "$name"
+    if ! df_ledger_record "$d" "$sys" "$name"; then
+      df_log "STOP: could not record the reveal of $sys/$name in revealed.tsv (card full or read-only?); the journal is kept for the next pass"
+      return 2
+    fi
     printf '%s\t%s\t%s\t%s\n' "$sys" "$name" "$d" "$dest"
     df_log "RECOVERED reveal after interruption: $sys/$name"
     df_tx_clear
@@ -787,7 +818,7 @@ df_tx_recover() {
     df_log "RECOVERY retry: reveal move had not started: $sys/$name"
     df_tx_clear
   else
-    df_log "RECOVERY HOLD: ambiguous reveal state for $sys/$name"
+    df_tx_hold "ambiguous reveal state for $sys/$name"
     return 1
   fi
 }
@@ -1771,6 +1802,11 @@ df_process_schedule_requests() {
       df_log "BROWSER SCHEDULE held (duplicate queue entries): $d $sys/$name"
       continue
     fi
+    if [ -n "$staged" ] && [ -e "$source" ]; then
+      # A queued AND a visible copy: never guess which is the game (RECOVERY.md).
+      printf '%s\t%s\t%s\n' "$d" "$sys" "$name" >> "$tmp"
+      df_log "BROWSER SCHEDULE held (queued and visible copies; see --diag): $d $sys/$name"; continue
+    fi
     if [ "$staged" = "$dest" ] && [ -e "$dest" ]; then
       df_log "BROWSER SCHEDULE already applied: $d $sys/$name"; continue
     fi
@@ -2167,6 +2203,7 @@ df_run_reveal() {
 
 df_reveal_pass() {
   local interactive="$1"
+  df_sweep_temp
   df_migrate_legacy_queues
   df_process_unschedule_requests
   df_process_schedule_requests
@@ -2177,9 +2214,14 @@ df_reveal_pass() {
     [ "$interactive" -eq 1 ] && df_announce "Console clock isn't set yet. Set the time (Scripts > timezone / WiFi), then try again."
     return 0
   fi
-  local recovered="$DF_STATE/.recovered.$$"
+  local recovered="$DF_STATE/.recovered.$$" trc
   : > "$recovered"
-  df_tx_recover > "$recovered" 2>/dev/null || true
+  df_tx_recover > "$recovered" 2>>"$DF_LOG"; trc=$?
+  if [ "$trc" -eq 2 ]; then     # revealed.tsv cannot be written: nothing more this pass
+    rm -f "$recovered" 2>/dev/null
+    [ "$interactive" -eq 1 ] && df_announce "A new game could not be recorded (card full or read-only?). Nothing else was changed; Dripfeed will try again next time."
+    return 1
+  fi
   local recovered_count; recovered_count=$(wc -l < "$recovered" 2>/dev/null | tr -d '[:space:]')
   [ -n "$recovered_count" ] || recovered_count=0
   local due; due=$(df_find_due | sort)
@@ -2200,7 +2242,7 @@ EOF_COUNT
     return 0
   fi
   # Pass 1: reveal the due games (no subshell — counters survive the loop).
-  local revealed="$recovered_count" d sys entry rc last_date="" msg held_xdev=0 systems=""
+  local revealed="$recovered_count" d sys entry rc last_date="" msg held_xdev=0 systems="" stopped=0
   local revlist="$DF_STATE/.revealed.$$" rsys rname rdate rdest
   mv "$recovered" "$revlist" 2>/dev/null || : > "$revlist"
   if [ "$recovered_count" -gt 0 ]; then
@@ -2220,8 +2262,13 @@ EOF_COUNT
     [ "$rc" -eq 4 ] && { held_xdev=$((held_xdev+1)); continue; }
     [ "$rc" -eq 1 ] && continue
     if [ "$rc" -eq 0 ]; then
+      if ! df_ledger_record "$d" "$REVEAL_SYS" "$REVEAL_NAME"; then
+        # The game is in place and its journal stays, so the next pass records it;
+        # stop revealing now so no later journal replaces that one.
+        df_log "STOP: could not record the reveal of $REVEAL_SYS/$REVEAL_NAME in revealed.tsv (card full or read-only?); the journal is kept for the next pass"
+        stopped=1; break
+      fi
       revealed=$((revealed+1))
-      df_ledger_record "$d" "$REVEAL_SYS" "$REVEAL_NAME"
       df_tx_clear
       df_touch_revealed "$REVEAL_DEST"
       printf '%s\t%s\t%s\t%s\n' "$REVEAL_SYS" "$REVEAL_NAME" "$d" "$REVEAL_DEST" >> "$revlist"
@@ -2260,12 +2307,14 @@ EOF_DUE
   df_gotm_update
   if [ "$interactive" -eq 1 ]; then
     [ "$held_xdev" -gt 0 ] && df_announce "HELD: $held_xdev game(s) are on a different drive than the waiting library. See --diag."
-    df_announce "All caught up. Enjoy!"
+    if [ "$stopped" -eq 1 ]; then df_announce "STOPPED EARLY: a new game could not be recorded (card full or read-only?). Dripfeed will finish next time."
+    else df_announce "All caught up. Enjoy!"; fi
     [ -n "$SHOWCASE_DIR" ] && echo "  New games are also collected in the menu folder: ${SHOWCASE_DIR##*/}"
     echo "  If a game isn't showing yet, back out of the folder and re-open it."
     [ "$revealed" -gt 0 ] && echo "  $DF_FRONTEND_HINT"
     echo
   fi
+  [ "$stopped" -eq 0 ] || return 1
   return 0
 }
 
@@ -2386,6 +2435,12 @@ df_diag() {
     [ "$n" -eq 1 ] || { echo "  browser leftovers (ignored):"; n=1; }
     s="${path%/*}"; s="${s%/"$STAGE_DIRNAME"}"; s="${s##*/}"
     echo "    ${path##*/}   [$s] BROWSER-SWAP-FILE (an interrupted browser copy; never revealed)"
+  done
+  n=0
+  for path in "$DF_TX_DIR"/held-*.tsv; do
+    [ -f "$path" ] || continue
+    [ "$n" -eq 1 ] || { echo "  recovery holds (a reveal journal Dripfeed could not resolve; nothing was moved or removed):"; n=1; }
+    echo "    ${path##*/}   $(tr '\t' ' ' < "$path")"
   done
   n=$(grep -c . "$DF_SCHEDULE_REQUESTS" 2>/dev/null); s=$(grep -c . "$DF_UNSCHEDULE_REQUESTS" 2>/dev/null)
   echo "  browser move requests: schedule=${n:-0}, unschedule=${s:-0}"
@@ -2810,9 +2865,11 @@ df_list() {
   out=$({
     for stage in "$STAGING_ROOT"/${sys:-*}/ "$GAMES_DIR"/${sys:-*}/"$STAGE_DIRNAME"/; do
       [ -d "$stage" ] || continue
+      # Balanced "(pattern)" forms and no quotes inside an expansion: this case
+      # sits inside $( ), which Bash 3.2 (stock macOS) scans without a full parser.
       case "$stage" in
-        "$STAGING_ROOT"/*) s="${stage%/}"; s="${s##*/}" ;;
-        *) s="${stage%/"$STAGE_DIRNAME"/}"; s="${s##*/}" ;;
+        ("$STAGING_ROOT"/*) s="${stage%/}"; s="${s##*/}" ;;
+        (*) s="${stage%/}"; s="${s%/*}"; s="${s##*/}" ;;
       esac
       for entry in "$stage"*; do
         [ -e "$entry" ] || continue

@@ -322,6 +322,37 @@ test("ledger: an unreadable ledger is never overwritten as if it were empty", as
   assert.deepStrictEqual(ledgerRows(state, "schedule-requests.tsv"), ["2027-01-01\tNES\tKeep Me.nes", "2027-02-02\tNES\tNew.nes"]);
 });
 
+test("ledger: a write is refused, never sent to another card, when the connected folder changes meanwhile", async () => {
+  const api = loadFsSection(); const { DirH, io } = makeFs();
+  const cardA = new DirH(".dripfeed"), cardB = new DirH(".dripfeed");
+  cardA.files.set("schedule-requests.tsv", "2027-01-01\tNES\tOn A.nes\n"); cardA.files.set("occasions.tsv", "2027-01-01\tA banner\n");
+  cardB.files.set("schedule-requests.tsv", "2027-05-05\tPSX\tOn B.chd\n"); cardB.files.set("occasions.tsv", "2027-05-05\tB banner\n");
+  api.set({ stateDir: cardA, stateIsConsole: true });
+  // Reconnect points the page at card B while card A's ledger is still being read.
+  const get = cardA.getFileHandle.bind(cardA);
+  cardA.getFileHandle = async (n, o) => { api.set({ stateDir: cardB }); return get(n, o); };
+  await assert.rejects(api.requestSchedule("2027-02-02", "NES", "New.nes"), /connected folder changed/);
+  assert.strictEqual(io.createWritable, 0, "nothing is written to either card");
+  assert.strictEqual(ledgerText(cardB, "schedule-requests.tsv"), "2027-05-05\tPSX\tOn B.chd\n");
+  assert.strictEqual(ledgerText(cardA, "schedule-requests.tsv"), "2027-01-01\tNES\tOn A.nes\n");
+  // Banners too: card B's occasions are never replaced by card A's.
+  api.set({ stateDir: cardA });
+  await assert.rejects(api.writeOccasion("2027-02-02", "Hello"), /connected folder changed/);
+  assert.strictEqual(io.createWritable, 0);
+  assert.strictEqual(ledgerText(cardB, "occasions.tsv"), "2027-05-05\tB banner\n");
+  // A request still waiting its turn when the card changes is refused as well;
+  // the card that is connected keeps working.
+  cardA.getFileHandle = get; api.set({ stateDir: cardA });
+  const first = api.requestSchedule("2027-03-03", "NES", "Queued on A.nes");
+  api.set({ stateDir: cardB });
+  const second = api.requestSchedule("2027-04-04", "PSX", "Meant for B.chd");
+  await assert.rejects(first, /connected folder changed/);
+  await second;
+  assert.deepStrictEqual(ledgerRows(cardB, "schedule-requests.tsv"), ["2027-05-05\tPSX\tOn B.chd", "2027-04-04\tPSX\tMeant for B.chd"]);
+  assert.strictEqual(ledgerText(cardA, "schedule-requests.tsv"), "2027-01-01\tNES\tOn A.nes\n");
+  assert.strictEqual(io.createWritable, 1);
+});
+
 test("ledger: games-folder-only (limited) mode refuses to write card-side requests", async () => {
   const api = loadFsSection(); const { DirH, io } = makeFs();
   api.set({ stateDir: new DirH(".dripfeed_state"), stateIsConsole: false });
@@ -378,6 +409,133 @@ test("csv apply: a banner is saved only for rows whose request was written", () 
   const body = slice("async function csvApplyRows", "csvRows=[]; $(\"#csvTable\")");
   assert(/reqs\.push\(\{[^}]*message:r\.message\}\)/.test(body), "whole-card rows carry their banner into the batch");
   assert(/new Set\(rejected\)[\s\S]*!bad\.has\(q\)\)occ\[q\.date\]=q\.message/.test(body), "rejected rows add no banner");
+});
+
+// ---------------------------------------------------------------------------
+// Load the CSV review + apply section. Paths resolve against a small name set,
+// renames and ledger writes are recorded (and can be made to fail), and the few
+// page elements it touches are plain objects.
+// ---------------------------------------------------------------------------
+function loadCsvSection() {
+  // The page logs every failure it reports; the failures here are simulated.
+  const ctx = { console: { log: console.log, error() {} }, Promise, Error, Map, Set, JSON, Object, String, Array, Date, setTimeout };
+  vm.runInNewContext(`
+    const DATE_RE=/^\\d{4}-\\d{2}-\\d{2}_/;
+    function pad(n){return String(n).padStart(2,"0");}
+    function stripPrefix(n){return DATE_RE.test(n)?n.slice(11):n;}
+    const keyOf=(s,n)=>s+String.fromCharCode(31)+n;
+    let revealedKeys=new Set(), allowRehide=false, sdRoot=null, systems=[{name:"NES",handle:{}}], stateIsConsole=true;
+    let csvStagedIndex=null, csvSysFiles=new Map();
+    const els={}; const $=s=>els[s]||(els[s]={textContent:"",value:"",innerHTML:"",disabled:false,style:{},classList:{contains:()=>false}});
+    const calls={toast:[],showTab:[],reconnect:[],renders:0,moves:[],requests:[],banners:[]};
+    function toast(msg,err){calls.toast.push([String(msg),!!err]);}
+    function showTab(t){calls.showTab.push(t);}
+    function guideReconnect(t){calls.reconnect.push(t);}
+    async function renderCsvTable(){calls.renders++;}
+    async function loadGames(){}
+    async function writeGotm(){}
+    function isSystemFile(){return false;}
+    async function stageDirFor(){return {name:"stage"};}
+    async function moveDir(){throw new Error("no folder moves in this test");}
+    const files=new Set(); let resolveHook=null;
+    async function resolvePath(rel){
+      if(resolveHook)return resolveHook(rel);
+      const i=rel.indexOf("/"), sys=rel.slice(0,i), name=rel.slice(i+1);
+      return files.has(rel)?{sys,sysHandle:{},name,kind:"file",handle:{}}:{error:"file not found",sys};
+    }
+    let moveHook=async()=>{}; async function moveFile(src,name,dest,newName){calls.moves.push(name+" -> "+newName);await moveHook(name);}
+    let requestHook=async()=>({rejected:[]}); async function applyMoveRequests(b){calls.requests.push(b);return requestHook(b);}
+    let bannerHook=async()=>{}; async function writeOccasions(o){calls.banners.push(o);return bannerHook(o);}
+    ${slice("function moveStopsBatch", "async function entryExists")}
+    ${slice("function isConnError", "// A file-level error")}
+    ${slice("function parseCsv", "// Resolve a games-relative path")}
+    ${slice("function gotmCsvPath", "// ---------- File System Access ----------")}
+    ${slice("let csvRows=[];", "function rowOk(r)")}
+    ${slice("function rowOk(r)", "let csvRenderSeq=0;")}
+    ${slice("async function csvApply()", "function downloadText")}
+    this.api={csvReview,csvReviewSafe,csvApply,files,calls,$,get rows(){return csvRows;},
+      set:o=>{if("stateIsConsole" in o)stateIsConsole=o.stateIsConsole;if("resolveHook" in o)resolveHook=o.resolveHook;
+        if("moveHook" in o)moveHook=o.moveHook;if("requestHook" in o)requestHook=o.requestHook;if("bannerHook" in o)bannerHook=o.bannerHook;}};`, ctx,
+    { filename: "Dripfeed-Scheduler.csv-section.js" });
+  return ctx.api;
+}
+const plain = o => JSON.parse(JSON.stringify(o));
+const lastToast = c => c.calls.toast[c.calls.toast.length - 1];
+
+test("csv review: a blank or day-first date is a repair row with a date box, never a crash", async () => {
+  const c = loadCsvSection();
+  ["Shiny Forts.nes", "Shiny Forts II.nes", "Shiny Forts III.nes", "Shiny Forts IV.nes", "Shiny Forts V.nes"].forEach(f => c.files.add("NES/" + f));
+  await c.csvReview("path,date,message\nNES/Shiny Forts.nes,,\nNES/Shiny Forts II.nes,31/12/2026,\nNES/Shiny Forts III.nes,2026-12-31,Hello\n"
+    + "NES/Missing.nes,,\nNES/Shiny Forts IV.nes,12/31/2026,\nNES/Shiny Forts V.nes,2026-08,GOT'eM Aug\n");
+  const rows = plain(c.rows);
+  assert.strictEqual(rows.length, 6);
+  assert.deepStrictEqual([rows[0].status, rows[0].needsdate, rows[0].name], ["missing date", true, "Shiny Forts.nes"]);
+  assert.deepStrictEqual([rows[1].status, rows[1].needsdate, rows[1].name], ["bad date: '31/12/2026'", true, "Shiny Forts II.nes"]);
+  assert.deepStrictEqual([rows[2].status, rows[2].date, rows[2].message], ["OK", "2026-12-31", "Hello"]);
+  assert.deepStrictEqual([rows[3].status, rows[3].needsdate], ["missing date", false], "a missing file gets no date box");
+  assert.deepStrictEqual([rows[4].status, rows[4].date], ["OK", "2026-12-31"]);
+  assert.deepStrictEqual([rows[5].status, rows[5].gotem], ["OK", "2026-08"]);
+  // A big sheet with one blank cell in the middle is reviewed to the end.
+  const lines = []; for (let i = 0; i < 150; i++) { c.files.add(`NES/Game ${i}.nes`); lines.push(`NES/Game ${i}.nes,${i === 119 ? "" : "2027-01-01"},`); }
+  await c.csvReview(lines.join("\n"));
+  assert.strictEqual(c.rows.length, 150);
+  assert.strictEqual(c.rows.filter(r => r.status === "OK").length, 149);
+  assert.strictEqual(c.rows[119].status, "missing date");
+  // Should a review still stop early, the person is told in plain words (the
+  // Review button, the file picker and the reconnect steps all use csvReviewSafe).
+  const reconnects = c.calls.reconnect.length;
+  c.set({ resolveHook: async () => { throw new Error("simulated bad row"); } });
+  await c.csvReviewSafe("NES/Game 1.nes,2027-01-01,");
+  assert.deepStrictEqual(plain(lastToast(c)), ["Review did not finish: simulated bad row", true]);
+  assert.strictEqual(c.$("#csvSummary").textContent, "Review did not finish: simulated bad row");
+  assert.strictEqual(c.calls.reconnect.length, reconnects);
+  c.set({ resolveHook: async () => { throw domErr("NotFoundError"); } });
+  await c.csvReviewSafe("NES/Game 1.nes,2027-01-01,");
+  assert.strictEqual(c.calls.reconnect.length, reconnects + 1, "a lost folder gets the reconnect steps");
+  assert(/csvReviewSafe\(t\)/.test(slice("function guideReconnect", "window.addEventListener(\"unhandledrejection\"")), "the reconnect steps re-review through csvReviewSafe");
+  assert(/csvReviewSafe\(t\)/.test(slice("$(\"#csvReview\").onclick", "$(\"#csvChoose\")")) && /csvReviewSafe\(rd\.result\)/.test(slice("$(\"#csvFile\").onchange", "$(\"#csvApply\").onclick")), "button and file picker review through csvReviewSafe");
+});
+
+test("csv apply: a failed apply keeps the rows, the pasted text and the Import tab for a retry", async () => {
+  const c = loadCsvSection();
+  c.files.add("NES/A.nes"); c.files.add("NES/B.nes");
+  const paste = "NES/A.nes,2027-01-01,Hello\nNES/B.nes,2027-01-02,\n";
+  c.$("#csvPaste").value = paste;
+  await c.csvReview(paste);
+  assert.strictEqual(c.rows.filter(r => r.status === "OK").length, 2);
+  c.set({ requestHook: async () => { throw new Error("simulated full card"); } });
+  await c.csvApply();
+  assert.strictEqual(c.rows.length, 2, "rows stay after a failed ledger write");
+  assert.strictEqual(c.$("#csvPaste").value, paste, "the pasted text stays for the reconnect re-review");
+  assert.strictEqual(c.calls.showTab.length, 0, "the Import tab stays open");
+  const [msg, err] = lastToast(c);
+  assert(err && /2 failed: simulated full card/.test(msg) && /still listed/.test(msg), msg);
+  assert.strictEqual(c.calls.banners.length, 0, "no banner is saved when the requests were not written");
+  // The write works again: the same rows go through, then the review is cleared.
+  c.set({ requestHook: async () => ({ rejected: [] }) });
+  await c.csvApply();
+  assert.strictEqual(c.calls.requests.length, 2);
+  assert.deepStrictEqual(plain(c.calls.requests[1].schedule.map(q => q.date + " " + q.sys + " " + q.name)), ["2027-01-01 NES A.nes", "2027-01-02 NES B.nes"]);
+  assert.deepStrictEqual(plain(c.calls.banners), [{ "2027-01-01": "Hello" }]);
+  assert.strictEqual(c.rows.length, 0); assert.strictEqual(c.$("#csvPaste").value, ""); assert.strictEqual(c.calls.showTab.join(), "queue");
+});
+
+test("csv apply (limited mode): a refused rename keeps the review, and a second Apply skips rows already moved", async () => {
+  const c = loadCsvSection(); c.set({ stateIsConsole: false });
+  c.files.add("NES/A.nes"); c.files.add("NES/B.nes");
+  const paste = "NES/A.nes,2027-01-01,\nNES/B.nes,2027-01-02,\n"; c.$("#csvPaste").value = paste;
+  await c.csvReview(paste);
+  c.set({ moveHook: async name => { if (name === "B.nes") throw domErr("NoModificationAllowedError", "simulated sharing violation"); } });
+  await c.csvApply();
+  assert.strictEqual(c.calls.moves.join(";"), "A.nes -> 2027-01-01_A.nes;B.nes -> 2027-01-02_B.nes");
+  assert.strictEqual(c.rows.length, 2); assert.strictEqual(c.$("#csvPaste").value, paste);
+  assert.strictEqual(c.rows[0].staged, "2027-01-01_A.nes", "a moved row is now a scheduled row");
+  assert.strictEqual(c.calls.showTab.length, 0);
+  assert(/1 failed: .*sharing violation/.test(lastToast(c)[0]), lastToast(c)[0]);
+  c.set({ moveHook: async () => {} });
+  await c.csvApply();
+  assert.strictEqual(c.calls.moves.join(";"), "A.nes -> 2027-01-01_A.nes;B.nes -> 2027-01-02_B.nes;B.nes -> 2027-01-02_B.nes", "only the failed row is moved again");
+  assert.strictEqual(c.rows.length, 0); assert.strictEqual(c.calls.showTab.join(), "queue");
 });
 
 // ===========================================================================

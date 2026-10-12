@@ -435,12 +435,23 @@ async function readOccasions(strict){
   (await readStateText("occasions.tsv",strict)).split("\n").forEach(l=>{if(!l)return;const i=l.indexOf("\t");if(i>0)map[l.slice(0,i)]=l.slice(i+1);});
   return map;
 }
+// A state write belongs to the card that was connected when it was asked for.
+// Reconnecting can point stateDir at another card while a write waits its turn
+// or between its read and its write; rows read from card A must never replace
+// card B's file. Writers take the guard at entry and ask it before every write.
+function sameCardGuard(){
+  const dir=stateDir;
+  return ()=>{if(stateDir!==dir)throw new Error("The connected folder changed while this request was waiting. Nothing was written. Connect the card you meant and try again.");};
+}
 // changes: {date: message|""}; one read + one write for any number of dates.
 function writeOccasions(changes){
+  const sameCard=sameCardGuard();
   return withStateLock(async()=>{
+    sameCard();
     const map=await readOccasions(true);
     for(const [date,message] of Object.entries(changes)){if(message&&message.trim())map[date]=message.trim(); else delete map[date];}
     const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
+    sameCard();
     const fh=await stateDir.getFileHandle("occasions.tsv",{create:true});
     const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
   });
@@ -486,11 +497,17 @@ function mergeMoveRequests(sOld,uOld,{schedule=[],unschedule=[],cancel=[]}){
 // cost 2 swap-file writes per game: 5,000 games = 10,000 writes, ~690 MiB, for a
 // 283 KiB ledger.) Resolves to {rejected:[rows not written]}.
 function applyMoveRequests(batch){
+  const sameCard=sameCardGuard();
   return withStateLock(async()=>{
     if(!stateIsConsole)throw new Error("whole SD card required for safe card-side move");
+    sameCard();
     const sOld=await readMoveRequests("schedule-requests.tsv",true,true), uOld=await readMoveRequests("unschedule-requests.tsv",false,true);
     const m=mergeMoveRequests(sOld,uOld,batch);
+    // Schedule first, return second; the engine applies returns before schedules,
+    // so a pair cut short by a lost card still ends at the latest request (spec §5).
+    sameCard();
     if(m.scheduleChanged)await writeMoveRequests("schedule-requests.tsv",m.schedule,true);
+    sameCard();
     if(m.unscheduleChanged)await writeMoveRequests("unschedule-requests.tsv",m.unschedule,false);
     return {rejected:m.rejected};
   });
@@ -537,7 +554,7 @@ function guideReconnect(title,extra){
     d.remove();
     await connectFlow();
     const t=$("#csvPaste").value.trim();
-    if(t&&!$("#tab-import").classList.contains("hidden"))await csvReview(t);
+    if(t&&!$("#tab-import").classList.contains("hidden"))await csvReviewSafe(t);
   };
 }
 window.addEventListener("unhandledrejection",e=>{
@@ -1283,7 +1300,7 @@ async function csvReview(text){
       out.push(row); continue;
     }
     else if(!date){ const res=await resolvePath(r.path); Object.assign(row,res.error?{}:res);
-      row.status=r.dateRaw.trim()?("bad date: '"+r.dateRaw+"'"):"missing date"; row.needsdate=!res.error; }
+      row.status=row.dateRaw.trim()?("bad date: '"+row.dateRaw+"'"):"missing date"; row.needsdate=!res.error; }
     else {
       const res=await resolvePath(r.path);
       if(res.error){ row.status="NOT FOUND: "+res.error; row.sys=res.sys||(r.path.split("/")[0]); }
@@ -1313,6 +1330,16 @@ async function csvReview(text){
     guideReconnect("Most CSV rows didn't match any files",
       "Your paths look like <code>SYSTEM/file</code>, so the app needs the folder that directly <b>contains those system folders</b> (your <code>games</code> folder or the whole SD card). Also check the system folder names in the CSV match the real ones (e.g. <code>MegaDrive</code>, not <code>GENESIS</code>).");
   }
+}
+// Review starts from the Review button, the file picker and the reconnect steps.
+// If it stops early (a row the code cannot handle, a folder that went away), say
+// so in plain words instead of leaving the page blank with no table.
+function csvReviewSafe(text){
+  return csvReview(text).catch(e=>{console.error(e);
+    const why=(e&&(e.message||e.name))||String(e);
+    $("#csvSummary").textContent="Review did not finish: "+why;
+    if(isConnError(e))guideReconnect("Lost access to the connected folder");
+    else toast("Review did not finish: "+why,true);});
 }
 function rowOk(r){ return r.status==="OK" && !r.skip; }
 let csvRenderSeq=0;
@@ -1405,6 +1432,7 @@ async function csvApplyRows(rows){
       }
       else if(r.kind==="file") await moveFile(sys.handle,r.name,stage,newName);
       else await moveDir(sys.handle,r.name,stage,newName);
+      r.staged=newName; r.stageHandle=stage; r.redate=false;   // a second Apply (after a failure elsewhere) leaves it alone
       if(r.message) occ[r.date]=r.message;
       done++;
     }catch(e){console.error(e);lastErr=e;fail++;
@@ -1423,12 +1451,17 @@ async function csvApplyRows(rows){
   if(requestsOk&&Object.keys(occ).length){
     try{await writeOccasions(occ);}catch(e){console.error(e);bannerErr=e;}
   }
-  csvRows=[]; $("#csvTable").innerHTML=""; $("#csvApplyRow").style.display="none";
-  $("#csvPaste").value=""; $("#csvSummary").textContent="";
+  // Clear the review only when every row went through. After a failure the rows,
+  // the pasted text and this tab stay, so the person can fix what failed (or
+  // reconnect: the reconnect steps re-review the pasted text) and apply again.
+  const allDone=!fail&&!bannerErr;
+  if(allDone){csvRows=[]; $("#csvTable").innerHTML=""; $("#csvApplyRow").style.display="none";
+    $("#csvPaste").value=""; $("#csvSummary").textContent="";}
+  else renderCsvTable();
   await loadGames($("#systemSel").value);
-  toast(`Imported ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed"+(lastErr?": "+lastErr.message:"")+")":""}${stopped?" ("+stopped+" not attempted)":""}${bannerErr?" — banner messages were not saved ("+(bannerErr.message||bannerErr.name)+")":""}`,fail>0||!!bannerErr);
+  toast(`Imported ${done} game${done!==1?"s":""}${fail?" ("+fail+" failed"+(lastErr?": "+lastErr.message:"")+")":""}${stopped?" ("+stopped+" not attempted)":""}${bannerErr?" — banner messages were not saved ("+(bannerErr.message||bannerErr.name)+")":""}${allDone?"":" — the rows are still listed; fix them and apply again"}`,fail>0||!!bannerErr);
   if(fail&&isConnError(lastErr))guideReconnect("Some rows couldn't be imported — the folder connection looks stale");
-  showTab("queue");
+  if(allDone)showTab("queue");
 }
 function downloadText(name,text,mime){
   const b=new Blob([text],{type:mime||"text/plain"}); const u=URL.createObjectURL(b);
@@ -1449,9 +1482,9 @@ async function exportCsv(){
   downloadText("dripfeed-schedule.csv", lines.join("\n")+"\n", "text/csv");
   toast(items.length?("Exported "+items.length+" rows"):"Exported empty template");
 }
-$("#csvReview").onclick=()=>{ const t=$("#csvPaste").value.trim(); if(!t){toast("Paste CSV or choose a file first.",true);return;} csvReview(t); };
+$("#csvReview").onclick=()=>{ const t=$("#csvPaste").value.trim(); if(!t){toast("Paste CSV or choose a file first.",true);return;} csvReviewSafe(t); };
 $("#csvChoose").onclick=()=>$("#csvFile").click();
-$("#csvFile").onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=()=>{$("#csvPaste").value=rd.result; csvReview(rd.result);}; rd.readAsText(f); };
+$("#csvFile").onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=()=>{$("#csvPaste").value=rd.result; csvReviewSafe(rd.result);}; rd.readAsText(f); };
 $("#csvApply").onclick=csvApply;
 $("#csvExport").onclick=exportCsv;
 $("#exportCsv").onclick=exportCsv;

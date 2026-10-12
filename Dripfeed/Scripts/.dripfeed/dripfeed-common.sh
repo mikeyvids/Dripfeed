@@ -506,12 +506,13 @@ df_lock() {
   if mkdir "$DF_LOCK" 2>/dev/null; then df_lock_take; return 0; fi
   df_lock_stale || return 1
   # Reclaim: rename the stale lock aside first (atomic, only one process wins),
-  # then make sure what we moved is still the lock we judged stale.
-  local snap junk="$DF_LOCK.stale.$$"
-  snap=$(cat "$DF_LOCK/owner" "$DF_LOCK/ts" 2>/dev/null)
+  # then judge the directory we now hold alone AGAIN: another starter may have
+  # reclaimed the stale lock and be running under it since we first looked.
+  local keep="$DF_LOCK" junk="$DF_LOCK.stale.$$" rc
   rm -rf "$junk" 2>/dev/null          # never mv the lock INTO a leftover of a reused pid
   mv "$DF_LOCK" "$junk" 2>/dev/null || return 1
-  if [ "$(cat "$junk/owner" "$junk/ts" 2>/dev/null)" != "$snap" ]; then
+  DF_LOCK="$junk"; df_lock_stale; rc=$?; DF_LOCK="$keep"
+  if [ "$rc" -ne 0 ]; then            # a live holder: give its lock back untouched
     [ -e "$DF_LOCK" ] || mv "$junk" "$DF_LOCK" 2>/dev/null
     return 1
   fi
@@ -547,6 +548,20 @@ df_lock_describe() {
   else echo "held by pid $LOCK_PID, which is gone (will be reclaimed)"; fi
 }
 DF_BUSY_MSG="Dripfeed is busy (a reveal or another change is running). Nothing was changed; try again in a minute."
+# Scratch files carry the pid that made them (.index.<pid>, .requests.<pid>,
+# .revealed.<pid>, schedule-requests.tsv.tmp.<pid> ...). A crash or power cut
+# leaves them behind; at the start of a pass, under the lock, remove the ones
+# whose maker is gone. A live process's files are never touched.
+df_sweep_temp() {
+  local f pid
+  for f in "$DF_STATE"/.index.* "$DF_STATE"/.requests.* "$DF_STATE"/.revealed.* "$DF_STATE"/.recovered.* \
+           "$DF_SCHEDULE_REQUESTS".tmp.* "$DF_UNSCHEDULE_REQUESTS".tmp.*; do
+    [ -f "$f" ] || continue
+    pid="${f##*.}"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    df_pid_alive "$pid" || rm -f "$f" 2>/dev/null
+  done
+}
 
 # ---- Logging (always on, so we can diagnose on real hardware) ---------------
 df_log() {
@@ -724,20 +739,36 @@ df_tx_clear() {
   sync 2>/dev/null || true
 }
 
+# A journal the engine cannot resolve is set aside under its own name, so the
+# next reveal never overwrites it and --diag can list it. Nothing it names is
+# moved or removed.
+df_tx_hold() {
+  local now held
+  df_strftime now '%s'; held="$DF_TX_DIR/held-$now.tsv"
+  [ -e "$held" ] && held="$DF_TX_DIR/held-$now.$$.tsv"
+  mv "$DF_TX_DIR/current.tsv" "$held" 2>/dev/null
+  df_log "RECOVERY HOLD: $1 (journal kept as transactions/${held##*/})"
+}
+
 # Print a recovered reveal as system<TAB>name<TAB>date<TAB>destination. If the
 # move never happened, discard the stale intent and let the normal queue retry.
 # Ambiguous states are deliberately left in place for diagnosis—never delete or
-# overwrite a user's game to guess what happened.
+# overwrite a user's game to guess what happened. Returns 1 for a hold (the pass
+# goes on) and 2 when revealed.tsv could not be written: then the journal stays
+# and the caller ends the pass, so the next one records the reveal.
 df_tx_recover() {
   local tx="$DF_TX_DIR/current.tsv" d sys name src dest
   [ -f "$tx" ] || return 0
   IFS=$'\t' read -r d sys name src dest < "$tx"
   case "$src:$dest" in
     "$STAGING_ROOT"/*:"$GAMES_DIR"/*|"$GAMES_DIR"/*/"$STAGE_DIRNAME"/*:"$GAMES_DIR"/*) ;;
-    *) df_log "RECOVERY HOLD: invalid transaction paths"; return 1 ;;
+    *) df_tx_hold "invalid transaction paths"; return 1 ;;
   esac
   if [ -e "$dest" ] && [ ! -e "$src" ]; then
-    df_ledger_record "$d" "$sys" "$name"
+    if ! df_ledger_record "$d" "$sys" "$name"; then
+      df_log "STOP: could not record the reveal of $sys/$name in revealed.tsv (card full or read-only?); the journal is kept for the next pass"
+      return 2
+    fi
     printf '%s\t%s\t%s\t%s\n' "$sys" "$name" "$d" "$dest"
     df_log "RECOVERED reveal after interruption: $sys/$name"
     df_tx_clear
@@ -745,7 +776,7 @@ df_tx_recover() {
     df_log "RECOVERY retry: reveal move had not started: $sys/$name"
     df_tx_clear
   else
-    df_log "RECOVERY HOLD: ambiguous reveal state for $sys/$name"
+    df_tx_hold "ambiguous reveal state for $sys/$name"
     return 1
   fi
 }

@@ -61,6 +61,11 @@ logs them instead of revealing them, and the web scheduler skips `.crswap` names
   hold with nothing copied; `mv` must never fall back to copy+delete.
 - The engine **never overwrites** an existing destination — it skips and logs, so a
   game/save already present is never clobbered.
+- The one-line reveal journal (`<STATE>/transactions/current.tsv`) is cleared only
+  after `revealed.tsv` holds the row. If that row cannot be written, the journal
+  stays and the pass ends, so the next pass records the reveal; a journal the
+  engine cannot resolve is kept as `transactions/held-<time>.tsv` (listed by
+  `--diag`) and is never overwritten by the next reveal.
 - The browser never moves a multi-disc folder itself. With the whole card
   selected, it writes `Scripts/.dripfeed/schedule-requests.tsv`; the card-side
   engine consumes that request with one same-filesystem rename. Re-date and return
@@ -162,13 +167,24 @@ unschedule-requests.tsv → SYSTEM<TAB>FINAL_NAME
 On the next Dripfeed run, the engine validates the request and firmware guard,
 then uses a same-filesystem rename (§3). Scheduling an already queued name changes its
 date; unscheduling returns it to `games/<SYSTEM>/`. A request remains in its
-ledger when a source is missing, a destination collision needs attention, or the
-move would cross filesystems, and is removed only after the requested on-disk
-state is true.
+ledger when a source is missing, a destination collision needs attention (this
+includes a game that has both a queued and a visible copy), or the move would
+cross filesystems, and is removed only after the requested on-disk state is true.
 
 The browser never copies game data. In games-folder-only mode it may rename a
 single file with the File System Access `move()`; if that is refused, it reports
 the error and changes nothing.
+
+Write order. One click can change both ledgers (a schedule that replaces a
+pending return, or the reverse). The browser then writes `schedule-requests.tsv`
+first and `unschedule-requests.tsv` second, and the engine applies every return
+before any schedule. So if the card goes away between the two writes, the
+half-done pair still ends at the person's latest request on the next run; the
+page reports the failed write, and one retry finishes it. Each browser write is
+for the card that was connected when it was asked for: if the connected folder
+changes while a write is waiting, the write is refused and nothing is written.
+Keep one browser tab per card: two tabs on the same card do not share the write
+queue, so each can overwrite the other's rows.
 
 If you change any of the above, update this file, the engine, **both** schedulers, and
 `tests/run.sh` together.

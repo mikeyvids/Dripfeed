@@ -37,6 +37,7 @@ for (const [name, rel, expected] of pages) {
     // The browser renames or refuses; it never streams game data (no copy+delete fallback).
     if (/\.stream\s*\(|pipeTo\s*\(/.test(scripts.join("\n"))) throw new Error("Dripfeed: scheduler must never stream-copy game data");
     if (!html.includes("function applyMoveRequests") || !html.includes("function withStateLock")) throw new Error("Dripfeed: batched, serialized request-ledger writes missing");
+    if (!html.includes("function sameCardGuard") || !html.includes("function csvReviewSafe")) throw new Error("Dripfeed: card-change guard on state writes or CSV review error reporting missing");
     if (!html.includes("function buildIcs") || !html.includes('<input id="icsAlarm" type="checkbox">') || !html.includes("Add a 9 AM alert on the day")) throw new Error("Dripfeed: .ics builder or its opt-in alert is missing");
     if (/fetch\s*\(|XMLHttpRequest|WebSocket/.test(html)) throw new Error("Dripfeed: unexpected network API");
   }

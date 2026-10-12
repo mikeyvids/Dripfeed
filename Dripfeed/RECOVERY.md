@@ -28,6 +28,10 @@ unfinished copy. Verify instead of assuming.
 5. Run `Scripts/.dripfeed/dripfeed-engine.sh --diag` over SSH if available. It
    labels incomplete sets, duplicate queue entries, and a queued/visible name
    collision. These are recovery holds; Dripfeed will not guess which copy wins.
+   It also lists any reveal journal it could not resolve, kept as
+   `Scripts/.dripfeed/transactions/held-<time>.tsv`, and a browser request for a
+   game with both a queued and a visible copy stays in its ledger (the log says
+   "held (queued and visible copies; see --diag)") until you have sorted the copies.
 
 If both a staged and visible copy still exist, keep the verified complete copy
 in `games/<SYSTEM>/`. Move the questionable one off-card for examination. The

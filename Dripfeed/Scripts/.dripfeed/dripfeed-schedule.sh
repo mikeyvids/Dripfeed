@@ -110,9 +110,11 @@ df_list() {
   out=$({
     for stage in "$STAGING_ROOT"/${sys:-*}/ "$GAMES_DIR"/${sys:-*}/"$STAGE_DIRNAME"/; do
       [ -d "$stage" ] || continue
+      # Balanced "(pattern)" forms and no quotes inside an expansion: this case
+      # sits inside $( ), which Bash 3.2 (stock macOS) scans without a full parser.
       case "$stage" in
-        "$STAGING_ROOT"/*) s="${stage%/}"; s="${s##*/}" ;;
-        *) s="${stage%/"$STAGE_DIRNAME"/}"; s="${s##*/}" ;;
+        ("$STAGING_ROOT"/*) s="${stage%/}"; s="${s##*/}" ;;
+        (*) s="${stage%/}"; s="${s%/*}"; s="${s##*/}" ;;
       esac
       for entry in "$stage"*; do
         [ -e "$entry" ] || continue

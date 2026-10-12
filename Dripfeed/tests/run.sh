@@ -818,6 +818,67 @@ printf '..\tScripts\n' > "$CR/Scripts/.dripfeed/unschedule-requests.tsv"
 eng "$CR" --auto >/dev/null 2>&1
 chk "requests naming .. or the legacy queue folder are ignored (nothing moved)" '[ -f "$CR/Scripts/.dripfeed/dripfeed-engine.sh" ] && [ -d "$CR/games/SNES" ] && [ -z "$(ls -A "$CR/.dripfeed-library" 2>/dev/null | grep -v "^SNES$")" ] && [ -z "$(ls "$CR" | grep "^2099")" ] && [ -f "$CR/.dripfeed-library/SNES/2099-01-01_Legacy.sfc" ]'
 
+echo "== stale-lock reclaim: two starters, one stale lock, exactly one wins =="
+newcard CS; sleep 0.01 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+lib "$CS" 'df_boot_id; mkdir -p "$DF_LOCK"; printf "%s\n%s\n%s\n" "'"$DEADPID"'" "$DF_BOOT_ID" "${HOSTNAME:-}" > "$DF_LOCK/owner"; echo 1 > "$DF_LOCK/ts"'
+# A judges the lock stale, then pauses (test hook) until B has reclaimed it and is
+# running under it. A must then hand the lock back instead of taking it as well.
+DRIPFEED_ROOT="$CS" bash -c '. "$DRIPFEED_ROOT/Scripts/.dripfeed/dripfeed-common.sh"
+  eval "orig_$(declare -f df_lock_stale)"
+  df_lock_stale(){ orig_df_lock_stale || return 1; [ -f "$DRIPFEED_ROOT/a-paused" ] && return 0; : > "$DRIPFEED_ROOT/a-paused"; while [ ! -f "$DRIPFEED_ROOT/b-done" ]; do sleep 0.1; done; }
+  df_lock; echo $? > "$DRIPFEED_ROOT/a-rc"; sleep 1; df_unlock' &
+PA=$!; KILLS="$KILLS $PA"
+DRIPFEED_ROOT="$CS" bash -c '. "$DRIPFEED_ROOT/Scripts/.dripfeed/dripfeed-common.sh"
+  while [ ! -f "$DRIPFEED_ROOT/a-paused" ]; do sleep 0.1; done
+  df_lock; echo $? > "$DRIPFEED_ROOT/b-rc"; : > "$DRIPFEED_ROOT/b-done"; exec sleep 30' &
+PB=$!; KILLS="$KILLS $PB"
+wait "$PA" 2>/dev/null
+chk "a late starter hands a reclaimed lock back to its live holder (one winner, one reclaim line)" '[ "$(cat "$CS/a-rc")" = 1 ] && [ "$(cat "$CS/b-rc")" = 0 ] && [ "$(sed -n 1p "$CS/Scripts/.dripfeed/.lock/owner")" = "$PB" ] && [ "$(grep -c "reclaimed a stale lock" "$CS/Scripts/.dripfeed/dripfeed.log")" = 1 ]'
+kill "$PB" 2>/dev/null; wait "$PB" 2>/dev/null
+
+echo "== browser schedule request: a queued AND a visible copy is held, never guessed =="
+newcard CC; mkdir -p "$CC/games/PSX" "$CC/.dripfeed-library/PSX"
+echo visible > "$CC/games/PSX/Twice.chd"; echo queued > "$CC/.dripfeed-library/PSX/2099-01-01_Twice.chd"
+printf '2099-01-01\tPSX\tTwice.chd\n' > "$CC/Scripts/.dripfeed/schedule-requests.tsv"
+eng "$CC" --auto >/dev/null 2>&1
+chk "same-date request stays in its ledger; both copies untouched; the hold is logged" '[ -s "$CC/Scripts/.dripfeed/schedule-requests.tsv" ] && [ "$(cat "$CC/games/PSX/Twice.chd")" = visible ] && [ "$(cat "$CC/.dripfeed-library/PSX/2099-01-01_Twice.chd")" = queued ] && grep -q "BROWSER SCHEDULE held (queued and visible copies; see --diag): 2099-01-01 PSX/Twice.chd" "$CC/Scripts/.dripfeed/dripfeed.log"'
+printf '2099-02-02\tPSX\tTwice.chd\n' > "$CC/Scripts/.dripfeed/schedule-requests.tsv"
+eng "$CC" --auto >/dev/null 2>&1
+chk "a re-date request is held the same way (nothing renamed) and --diag flags the collision" '[ -s "$CC/Scripts/.dripfeed/schedule-requests.tsv" ] && [ -f "$CC/.dripfeed-library/PSX/2099-01-01_Twice.chd" ] && [ ! -e "$CC/.dripfeed-library/PSX/2099-02-02_Twice.chd" ] && [ -f "$CC/games/PSX/Twice.chd" ] && eng "$CC" --diag 2>&1 | grep -q "Twice.chd.*VISIBLE-COLLISION"'
+
+echo "== ledger cannot be written: the journal stays and the next pass records the reveal =="
+newcard CJ; mkdir -p "$CJ/games/SNES"; echo one > "$CJ/games/SNES/Alpha Cut.sfc"; echo two > "$CJ/games/SNES/Beta Waits.sfc"
+sch "$CJ" add SNES today "$CJ/games/SNES/Alpha Cut.sfc" >/dev/null 2>&1
+sch "$CJ" add SNES today "$CJ/games/SNES/Beta Waits.sfc" >/dev/null 2>&1
+mkdir "$CJ/Scripts/.dripfeed/revealed.tsv"      # nothing can be appended to the ledger (as on a full card)
+eng "$CJ" --auto >/dev/null 2>&1
+chk "the game is in place, its journal is kept, and the pass stops before the next reveal" '[ -f "$CJ/games/SNES/Alpha Cut.sfc" ] && grep -q "Alpha Cut.sfc" "$CJ/Scripts/.dripfeed/transactions/current.tsv" && [ -f "$CJ/.dripfeed-library/SNES/${TODAY}_Beta Waits.sfc" ] && grep -q "STOP: could not record the reveal of SNES/Alpha Cut.sfc" "$CJ/Scripts/.dripfeed/dripfeed.log"'
+eng "$CJ" --auto >/dev/null 2>&1
+chk "while the ledger stays unwritable, recovery keeps the journal, reveals nothing more, and logs the shell error" '[ -f "$CJ/Scripts/.dripfeed/transactions/current.tsv" ] && [ -f "$CJ/.dripfeed-library/SNES/${TODAY}_Beta Waits.sfc" ] && grep -qF "$CJ/Scripts/.dripfeed/revealed.tsv" "$CJ/Scripts/.dripfeed/dripfeed.log"'
+rmdir "$CJ/Scripts/.dripfeed/revealed.tsv"
+eng "$CJ" --auto >/dev/null 2>&1
+chk "once the ledger can be written, the next pass records the reveal, clears the journal and goes on" 'grep -q "Alpha Cut.sfc" "$CJ/Scripts/.dripfeed/revealed.tsv" && grep -q "Beta Waits.sfc" "$CJ/Scripts/.dripfeed/revealed.tsv" && [ ! -f "$CJ/Scripts/.dripfeed/transactions/current.tsv" ] && [ -f "$CJ/games/SNES/Beta Waits.sfc" ] && find "$CJ" -maxdepth 2 -type f -name "SNES - Alpha Cut.mgl" | grep -q .'
+
+echo "== ambiguous recovery journal is kept aside, never overwritten by the next reveal =="
+newcard CA2; mkdir -p "$CA2/games/SNES" "$CA2/.dripfeed-library/SNES" "$CA2/Scripts/.dripfeed/transactions"
+echo visible > "$CA2/games/SNES/Both Sides.sfc"; echo queued > "$CA2/.dripfeed-library/SNES/2020-01-01_Both Sides.sfc"
+echo due > "$CA2/.dripfeed-library/SNES/2020-01-02_Goes On.sfc"
+printf '2020-01-01\tSNES\tBoth Sides.sfc\t%s\t%s\n' "$CA2/.dripfeed-library/SNES/2020-01-01_Both Sides.sfc" "$CA2/games/SNES/Both Sides.sfc" > "$CA2/Scripts/.dripfeed/transactions/current.tsv"
+eng "$CA2" --auto >/dev/null 2>&1
+HELDF="$(ls "$CA2"/Scripts/.dripfeed/transactions/held-*.tsv 2>/dev/null | head -1)"
+chk "the journal becomes transactions/held-<time>.tsv; both copies stay; the other due game still reveals" '[ -n "$HELDF" ] && grep -q "Both Sides.sfc" "$HELDF" && [ ! -f "$CA2/Scripts/.dripfeed/transactions/current.tsv" ] && [ "$(cat "$CA2/games/SNES/Both Sides.sfc")" = visible ] && [ "$(cat "$CA2/.dripfeed-library/SNES/2020-01-01_Both Sides.sfc")" = queued ] && [ -f "$CA2/games/SNES/Goes On.sfc" ] && grep -q "RECOVERY HOLD: ambiguous reveal state for SNES/Both Sides.sfc (journal kept as transactions/held-" "$CA2/Scripts/.dripfeed/dripfeed.log"'
+chk "--diag lists the held journal" 'eng "$CA2" --diag 2>&1 | grep -q "held-.*Both Sides.sfc"'
+
+echo "== housekeeping: scratch files of a dead pid are swept at pass start =="
+newcard CT; sleep 0.01 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+for f in ".index.$DEADPID" ".requests.$DEADPID" ".revealed.$DEADPID" "schedule-requests.tsv.tmp.$DEADPID" ".index.$$"; do echo x > "$CT/Scripts/.dripfeed/$f"; done
+eng "$CT" --auto >/dev/null 2>&1
+chk "dead-pid leftovers are removed; a live process's scratch file stays" '[ ! -e "$CT/Scripts/.dripfeed/.index.$DEADPID" ] && [ ! -e "$CT/Scripts/.dripfeed/.requests.$DEADPID" ] && [ ! -e "$CT/Scripts/.dripfeed/.revealed.$DEADPID" ] && [ ! -e "$CT/Scripts/.dripfeed/schedule-requests.tsv.tmp.$DEADPID" ] && [ -f "$CT/Scripts/.dripfeed/.index.$$" ]'
+
+echo "== CLI list names the system of an old in-games queue (expansion kept Bash 3.2-safe) =="
+newcard CB; mkdir -p "$CB/games/SNES/.dripfeed"; echo old > "$CB/games/SNES/.dripfeed/2099-03-03_Old Queue.sfc"
+chk "list shows the legacy entry under SNES" 'sch "$CB" list 2>&1 | grep -q "2099-03-03  SNES          Old Queue.sfc"'
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
