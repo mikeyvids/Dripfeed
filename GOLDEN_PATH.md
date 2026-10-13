@@ -65,6 +65,20 @@ verified, complete these checks on a backed-up or disposable card.
   move to the new name with nothing left under the old one.
 - Interrupt power once only on a disposable card, then confirm the next boot logs
   `RECOVERED reveal after interruption` and creates no duplicate.
+- Copy the new `Dripfeed.sh` over the one on a card that already runs the
+  previous version and open it once from Scripts: confirm it says "Updating
+  Dripfeed to v1.4.2", `Scripts/.dripfeed/.version` reads `1.4.2`, and the UP
+  (Undrip) menu entry works afterwards.
+- Undrip asks twice. From Scripts → Undrip and from the launcher's UP entry:
+  press any button once and wait; confirm the second question appears and
+  silence cancels with the schedule intact. Hold a keyboard key, then a
+  controller button, for about a second and release; confirm each still cancels
+  (the second question must wait until the button is released). Press, release,
+  and press again after the second question; confirm the reset runs.
+- With a frontend that scans the card root rather than only `games/`, schedule a
+  game, refresh the frontend's library, and confirm nothing from
+  `/.dripfeed-library/` is listed and the empty marker file sits in that folder's
+  root only, never inside `games/`.
 
 ### Dripfeed Scheduler (browser)
 

@@ -491,6 +491,19 @@ newcard CZ; rm -rf "$CZ/Scripts/.dripfeed"; cp "$HERE/../Scripts/Dripfeed.sh" "$
 LOUT="$(PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Dripfeed.sh" </dev/null 2>&1)"
 LVER="$(grep -m1 '^DRIPFEED_VERSION=' "$HERE/../Scripts/Dripfeed.sh" | cut -d'"' -f2)"
 chk "launcher outside MiSTer installs but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ "$(cat "$CZ/Scripts/.dripfeed/.version")" = "$LVER" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+# The launcher's embedded copies must be the files in Scripts/ (tools/sync-launcher.sh
+# regenerates them); otherwise the launcher checks here run code the suite never saw.
+EMB=0; for f in dripfeed-common.sh dripfeed-engine.sh dripfeed-install.sh dripfeed-schedule.sh; do cmp -s "$CZ/Scripts/.dripfeed/$f" "$SRC/$f" || EMB=1; done
+cmp -s "$CZ/Scripts/Undrip.sh" "$HERE/../Scripts/Undrip.sh" || EMB=1
+chk "the helpers the launcher writes are byte-identical to Scripts/ (run tools/sync-launcher.sh after editing a helper)" '[ "$EMB" = 0 ]'
+# A fix shipped without a version bump never reaches a card that already has the
+# previous helpers: they are re-extracted only when .version differs.
+CHVER="$(grep -m1 -E '^## [0-9]+\.[0-9]+\.[0-9]+' "$HERE/../CHANGELOG.md" | awk '{print $2}')"
+chk "DRIPFEED_VERSION ($LVER) matches the newest CHANGELOG entry ($CHVER)" '[ -n "$LVER" ] && [ "$LVER" = "$CHVER" ]'
+newcard CU; printf '%s\n' "0.0.1" > "$CU/Scripts/.dripfeed/.version"; echo stale > "$CU/Scripts/.dripfeed/dripfeed-common.sh"
+cp "$HERE/../Scripts/Dripfeed.sh" "$CU/Scripts/Dripfeed.sh"
+LOUT="$(PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CU" bash "$CU/Scripts/Dripfeed.sh" </dev/null 2>&1)"
+chk "a card on an older version is updated: the launcher says so, rewrites the helpers and records the new version" 'printf "%s\n" "$LOUT" | grep -q "Updating Dripfeed to v$LVER" && [ "$(cat "$CU/Scripts/.dripfeed/.version")" = "$LVER" ] && cmp -s "$CU/Scripts/.dripfeed/dripfeed-common.sh" "$SRC/dripfeed-common.sh" && [ ! -e "$NOBOOT/rebooted" ]'
 mkdir -p "$CZ/games/SNES"; echo two > "$CZ/games/SNES/Two Press.sfc"
 sch "$CZ" add SNES +5 "$CZ/games/SNES/Two Press.sfc" >/dev/null 2>&1
 chk "the waiting library gets its .zaparooignore marker when it is created" '[ -f "$CZ/.dripfeed-library/.zaparooignore" ] && [ -e "$CZ/.dripfeed-library/SNES" ]'
@@ -501,7 +514,11 @@ LOUT="$({ printf '\033[A'; sleep 0.5; printf x; } | PATH="$NOBOOT:$PATH" DRIPFEE
 chk "launcher UP = Undrip: one press shows what will happen and asks for one more; silence cancels" 'printf "%s\n" "$LOUT" | grep -qi "one more press" && printf "%s\n" "$LOUT" | grep -q "Cancelled" && [ -d "$CZ/Scripts/.dripfeed" ] && [ ! -e "$CZ/games/SNES/Two Press.sfc" ]'
 LOUT="$(printf x | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
 chk "Undrip.sh: one press shows what will happen and asks for one more; silence cancels" 'printf "%s\n" "$LOUT" | grep -qi "one more press" && printf "%s\n" "$LOUT" | grep -q "Cancelled" && [ -d "$CZ/Scripts/.dripfeed" ] && [ -f "$CZ/Scripts/Undrip.sh" ] && [ ! -e "$CZ/games/SNES/Two Press.sfc" ] && [ ! -e "$NOBOOT/rebooted" ]'
-LOUT="$({ printf x; sleep 0.5; printf x; } | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
+# A held button repeats (console keyboard: after ~250 ms, then every ~33 ms). The
+# second question waits for a full second of silence, so one hold never answers both.
+LOUT="$({ printf x; sleep 0.25; i=0; while [ "$i" -lt 40 ]; do printf x; sleep 0.033; i=$((i+1)); done; sleep 3; } | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
+chk "Undrip.sh: a button held for under two seconds (key repeat) cancels; the schedule and the queued game stay" 'printf "%s\n" "$LOUT" | grep -qi "one more press" && printf "%s\n" "$LOUT" | grep -q "Cancelled" && [ -d "$CZ/Scripts/.dripfeed" ] && find "$CZ/.dripfeed-library/SNES" -name "*_Two Press.sfc" | grep -q . && [ ! -e "$CZ/games/SNES/Two Press.sfc" ] && [ ! -e "$NOBOOT/rebooted" ]'
+LOUT="$({ printf x; sleep 1.5; printf x; } | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
 chk "Undrip.sh: a second press undrips (outside MiSTer it resets but never reboots the computer)" '[ ! -e "$NOBOOT/rebooted" ] && [ ! -d "$CZ/Scripts/.dripfeed" ] && [ -f "$CZ/games/SNES/Two Press.sfc" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
 chk "Undrip removed the marker with the waiting library (no empty library left behind)" '[ ! -e "$CZ/.dripfeed-library" ]'
 scratch NOCARD; NOWHERE="$NOCARD/not-a-card"
@@ -883,9 +900,30 @@ chk "--diag lists the held journal" 'eng "$CA2" --diag 2>&1 | grep -q "held-.*Bo
 
 echo "== housekeeping: scratch files of a dead pid are swept at pass start =="
 newcard CT; sleep 0.01 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
-for f in ".index.$DEADPID" ".requests.$DEADPID" ".revealed.$DEADPID" "schedule-requests.tsv.tmp.$DEADPID" ".index.$$"; do echo x > "$CT/Scripts/.dripfeed/$f"; done
+mkdir -p "$CT/Scripts/.dripfeed/transactions" "$CT/Scripts/.dripfeed/.lock.stale.$DEADPID" "$CT/Scripts/.dripfeed/.lock.stale.$$"
+for f in ".index.$DEADPID" ".requests.$DEADPID" ".revealed.$DEADPID" "schedule-requests.tsv.tmp.$DEADPID" ".add-index.$DEADPID" ".add-req.$DEADPID" ".add-ann.$DEADPID" ".diag-index.$DEADPID" ".diag.$DEADPID" "transactions/current.tsv.new.$DEADPID" ".lock.stale.$DEADPID/owner" ".lock.stale.$$/owner" ".index.$$"; do echo x > "$CT/Scripts/.dripfeed/$f"; done
 eng "$CT" --auto >/dev/null 2>&1
 chk "dead-pid leftovers are removed; a live process's scratch file stays" '[ ! -e "$CT/Scripts/.dripfeed/.index.$DEADPID" ] && [ ! -e "$CT/Scripts/.dripfeed/.requests.$DEADPID" ] && [ ! -e "$CT/Scripts/.dripfeed/.revealed.$DEADPID" ] && [ ! -e "$CT/Scripts/.dripfeed/schedule-requests.tsv.tmp.$DEADPID" ] && [ -f "$CT/Scripts/.dripfeed/.index.$$" ]'
+SWEPT=1; for f in ".add-index.$DEADPID" ".add-req.$DEADPID" ".add-ann.$DEADPID" ".diag-index.$DEADPID" ".diag.$DEADPID" "transactions/current.tsv.new.$DEADPID" ".lock.stale.$DEADPID"; do [ -e "$CT/Scripts/.dripfeed/$f" ] && SWEPT=0; done
+chk "the CLI's, --diag's and the journal's scratch names and a dead pid's set-aside lock are swept too; a live pid's set-aside lock stays" '[ "$SWEPT" = 1 ] && [ -d "$CT/Scripts/.dripfeed/.lock.stale.$$" ]'
+
+echo "== a pass stopped by an unwritable ledger is retried on the next hourly tick, not tomorrow =="
+newcard CW; mkdir -p "$CW/games/SNES"; echo one > "$CW/games/SNES/Hourly Retry.sfc"
+printf 'BOOT_DELAY=0\nDAILY=0\n' >> "$CW/Scripts/.dripfeed/config.ini"
+sch "$CW" add SNES today "$CW/games/SNES/Hourly Retry.sfc" >/dev/null 2>&1
+mkdir "$CW/Scripts/.dripfeed/revealed.tsv"      # the ledger cannot be written (as on a full card)
+eng "$CW" --watch >/dev/null 2>&1
+chk "a boot pass stopped by the ledger leaves the day unstamped, so the hourly tick runs the pass again" '[ -f "$CW/games/SNES/Hourly Retry.sfc" ] && [ ! -e "$CW/Scripts/.dripfeed/.last_run_day" ] && grep -q "STOP: could not record the reveal of SNES/Hourly Retry.sfc" "$CW/Scripts/.dripfeed/dripfeed.log"'
+rmdir "$CW/Scripts/.dripfeed/revealed.tsv"; eng "$CW" --watch >/dev/null 2>&1
+chk "once the ledger can be written, the pass records the reveal and stamps the day" 'grep -q "Hourly Retry.sfc" "$CW/Scripts/.dripfeed/revealed.tsv" && [ "$(cat "$CW/Scripts/.dripfeed/.last_run_day")" = "$(lib "$CW" df_today_int)" ]'
+
+echo "== a journal short of a field is held, never retried forever =="
+newcard CI; mkdir -p "$CI/games/SNES" "$CI/.dripfeed-library/SNES" "$CI/Scripts/.dripfeed/transactions"
+echo due > "$CI/.dripfeed-library/SNES/2020-01-02_Still Goes.sfc"
+printf '2020-01-01\tSNES\n' > "$CI/Scripts/.dripfeed/transactions/current.tsv"
+eng "$CI" --auto >/dev/null 2>&1
+HELDI="$(ls "$CI"/Scripts/.dripfeed/transactions/held-*.tsv 2>/dev/null | head -1)"
+chk "the journal becomes held-<time>.tsv with a plain reason and the other due game still reveals" '[ -n "$HELDI" ] && [ ! -f "$CI/Scripts/.dripfeed/transactions/current.tsv" ] && [ -f "$CI/games/SNES/Still Goes.sfc" ] && grep -q "RECOVERY HOLD: incomplete journal (journal kept as transactions/held-" "$CI/Scripts/.dripfeed/dripfeed.log"'
 
 echo "== CLI list names the system of an old in-games queue (expansion kept Bash 3.2-safe) =="
 newcard CB; mkdir -p "$CB/games/SNES/.dripfeed"; echo old > "$CB/games/SNES/.dripfeed/2099-03-03_Old Queue.sfc"

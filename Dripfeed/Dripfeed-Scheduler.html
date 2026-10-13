@@ -1092,10 +1092,13 @@ async function readGotm(strict){
   return map;
 }
 function writeGotms(changes){   // {month: path|null}
+  const sameCard=sameCardGuard();
   return withStateLock(async()=>{
+    sameCard();
     const map=await readGotm(true);
     for(const [month,path] of Object.entries(changes)){if(path)map[month]=path; else delete map[month];}
     const lines=Object.keys(map).sort().map(k=>k+"\t"+map[k]);
+    sameCard();
     const fh=await stateDir.getFileHandle("gotm.tsv",{create:true});
     const w=await fh.createWritable();await w.write(lines.join("\n")+(lines.length?"\n":""));await w.close();
   });
@@ -1353,8 +1356,9 @@ async function renderCsvTable(){
     const div=document.createElement("div"); div.className="qrow";
     const ok=rowOk(r);
     const stat=ok?(r.gotem?'<span style="color:var(--accent2)">GOT\'eM '+r.gotem+'</span>':r.staged?(r.redate?'<span style="color:var(--accent2)">RE-DATE</span>':'<span style="color:var(--accent)">OK (scheduled)</span>'):'<span style="color:var(--accent)">OK</span>'):'<span style="color:var(--bad)">'+r.status.replace(/</g,"&lt;")+'</span>';
+    const note=r.note?' <span style="color:var(--bad)">— failed: '+String(r.note).replace(/</g,"&lt;")+'</span>':'';   // why the last Apply failed for this row
     div.innerHTML=`<span class="d">${r.gotem||r.date||(r.dateRaw||"").replace(/</g,"&lt;")||"—"}</span>
-      <span class="n">${(r.path||"").replace(/</g,"&lt;")} ${r.message?'<span class="tag">msg</span>':''} — ${stat}</span>`;
+      <span class="n">${(r.path||"").replace(/</g,"&lt;")} ${r.message?'<span class="tag">msg</span>':''} — ${stat}${note}</span>`;
     if(!ok && r.needsdate){
       const di=document.createElement("input"); di.type="date"; di.style.maxWidth="160px";
       di.onchange=()=>{ if(!di.value)return; r.date=di.value; r.status="OK";
@@ -1409,9 +1413,10 @@ async function csvApply(){
   finally{$("#csvApply").disabled=false;}
 }
 async function csvApplyRows(rows){
-  let done=0,fail=0,lastErr=null,stopped=0;const reqs=[],occ={};
+  let done=0,fail=0,lastErr=null,stopped=0;const reqs=[],reqRows=[],occ={};
   for(let i=0;i<rows.length;i++){const r=rows[i];
     try{
+      delete r.note;                            // the reason an earlier Apply failed for this row
       if(r.gotem){    // GOT'eM track: one pick per month into gotm.tsv (message = shortcut label)
         await writeGotm(r.gotem, gotmStatePath(r.path)+(r.message?"\t"+r.message:""));   // <=1 per month: per-row is fine
         done++; continue;
@@ -1420,22 +1425,25 @@ async function csvApplyRows(rows){
       const sys=systems.find(s=>s.name===r.sys);
       if(stateIsConsole){
         reqs.push({date:r.date,sys:r.sys,name:stripPrefix(r.name),message:r.message});   // banner saved only if this row is accepted
+        reqRows.push(r);
         continue;
       }
       const stage=r.stageHandle||await stageDirFor(sys);
       const newName=r.date+"_"+stripPrefix(r.name);
+      let moved=true;
       if(r.staged){                             // already scheduled: just re-date in place
         if(r.staged!==newName){
           if(r.kind==="file") await moveFile(stage,r.staged,stage,newName);
           else await moveDir(stage,r.staged,stage,newName);
         }
+        else moved=false;                       // moved by an earlier Apply: left alone, not counted again
       }
       else if(r.kind==="file") await moveFile(sys.handle,r.name,stage,newName);
       else await moveDir(sys.handle,r.name,stage,newName);
       r.staged=newName; r.stageHandle=stage; r.redate=false;   // a second Apply (after a failure elsewhere) leaves it alone
       if(r.message) occ[r.date]=r.message;
-      done++;
-    }catch(e){console.error(e);lastErr=e;fail++;
+      if(moved) done++;
+    }catch(e){console.error(e);lastErr=e;fail++;r.note=e.message||e.name;   // shown in the row's status cell
       // Limited mode: nothing was copied; a refusal that repeats for every game stops the import.
       if(moveStopsBatch(e)){stopped=rows.length-i-1;break;}}
   }
@@ -1444,8 +1452,9 @@ async function csvApplyRows(rows){
   if(reqs.length){
     try{const {rejected}=await applyMoveRequests({schedule:reqs});done+=reqs.length-rejected.length;
       const bad=new Set(rejected);for(const q of reqs)if(q.message&&!bad.has(q))occ[q.date]=q.message;
+      reqs.forEach((q,i)=>{if(bad.has(q))reqRows[i].note="name contains an unsupported tab, slash, or newline";});
       if(rejected.length){fail+=rejected.length;lastErr=new Error("name contains an unsupported tab, slash, or newline: "+rejected[0].name);}}
-    catch(e){console.error(e);lastErr=e;fail+=reqs.length;requestsOk=false;}
+    catch(e){console.error(e);lastErr=e;fail+=reqs.length;requestsOk=false;for(const r of reqRows)r.note=e.message||e.name;}
   }
   let bannerErr=null;
   if(requestsOk&&Object.keys(occ).length){
@@ -1505,7 +1514,9 @@ function cleanFolderName(s,fallback){
 }
 async function readConfigIni(strict){return readStateText("config.ini",strict);}
 function patchConfigIni(kv){
+  const sameCard=sameCardGuard();
   return withStateLock(async()=>{
+    sameCard();
     let t=await readConfigIni(true);
     for(const [k,v] of Object.entries(kv)){
       const line=`${k}="${v}"`;
@@ -1513,6 +1524,7 @@ function patchConfigIni(kv){
       if(re.test(t)) t=t.replace(re,()=>line);
       else t+=(t.endsWith("\n")||!t?"":"\n")+line+"\n";
     }
+    sameCard();
     const fh=await stateDir.getFileHandle("config.ini",{create:true});
     const w=await fh.createWritable();await w.write(t);await w.close();
   });

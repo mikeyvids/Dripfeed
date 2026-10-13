@@ -1,5 +1,71 @@
 # Changelog — Dripfeed
 
+## 1.4.2 — 2026-10-13
+
+Safety fixes from an outside review of 1.4.1. Open `Dripfeed.sh` once on MiSTer
+after copying it to the card so the helpers update. Schedules, folders and
+settings are kept; there are no new options.
+
+- **CSV review no longer stops on a blank or day-first date.** A row with no
+  usable date is shown as a repair row with a date box, as the Import tab always
+  promised; before, one such row left the review blank. If a review still cannot
+  finish, the page says why instead of showing nothing.
+- **A failed import keeps your rows.** When any row fails to apply, the review
+  table, the pasted text and the Import tab stay, so you can fix the rows (or
+  reconnect the card) and apply again; each row that failed says why in its
+  status cell, and rows that already went through are left alone and not counted
+  a second time.
+- **Browser writes stay on the card they were meant for.** If the connected
+  folder changes while a schedule, return, banner, GOT'eM pick or folder-setting
+  write is waiting (a reconnect to another card), the write is refused and
+  nothing is written, instead of one card's rows replacing another's file. The
+  page writes `schedule-requests.tsv` first and `unschedule-requests.tsv` second,
+  the order the engine applies them in reverse, so a pair cut short by a lost
+  card still ends at your latest request after one retry. Keep one browser tab
+  per card.
+- **A running pass is never preempted.** When a lock left by a crashed run is
+  reclaimed, the reclaimer re-checks the lock it set aside; if another starter has
+  already reclaimed it and is running, the lock is handed back untouched. Exactly
+  one starter wins.
+- **A game with both a queued and a visible copy is held in the schedule lane
+  too.** Such a browser request stays in its ledger and is logged ("held (queued
+  and visible copies; see --diag)") instead of being dropped as already applied
+  or re-dated; `--diag` flags the collision. Nothing is guessed or renamed.
+- **A reveal is recorded or retried, never lost.** If `revealed.tsv` cannot be
+  written (card full or read-only), the reveal's journal is kept and the pass
+  stops with a plain message; the watcher tries again on its next hourly tick
+  rather than tomorrow, and the next pass that can write records the reveal and
+  goes on. A journal Dripfeed cannot resolve (an ambiguous state, or a journal
+  short of a field) is kept as `Scripts/.dripfeed/transactions/held-<time>.tsv`
+  and listed by `--diag`, instead of being replaced by the next reveal; if it
+  cannot be set aside, the log says so. Shell errors from recovery now go to the
+  log.
+- **Undrip asks twice.** The first press of any button shows plainly what will
+  happen (every waiting game back in its folder, schedule and settings cleared,
+  restart; games and saves untouched) and asks for one more; the second confirms;
+  doing nothing cancels. The second question is asked only once the button has
+  been released for a full second, so a held button (key repeat) never answers
+  both. Same from Undrip.sh and the launcher's UP menu.
+- **The waiting library carries a marker file.** `.dripfeed-library/.zaparooignore`
+  is an empty file some library indexers honour, so the waiting library is skipped
+  even when the card root is added as a scan root. It is written when the library
+  is created (or on the next pass if it is missing), only in the library root,
+  never inside `games/`, and removed by Undrip with the library. It is the only
+  frontend-specific file Dripfeed writes.
+- Scratch files left by a crashed or powered-off run (`.index.<pid>` and the
+  like in `Scripts/.dripfeed`, the command-line scheduler's and `--diag`'s index
+  files, a journal that was being written, and a lock set aside during a
+  reclaim) are removed at the start of the next pass; a live process's files are
+  never touched.
+- `dripfeed-schedule.sh list` parses under the stock macOS Bash 3.2 again.
+- README: keep each handheld's games in its own folder (`GameGear`, `GBC`, `FDS`)
+  rather than the parent console's; the folder decides where new saves go, from
+  the stock menu and a frontend alike. Dripfeed never moves a game between system
+  folders.
+- The test suite now checks that `DRIPFEED_VERSION` matches the newest entry in
+  this file, that a card on an older version is updated by the launcher, and that
+  the helpers the launcher writes are byte-identical to `Scripts/`.
+
 ## 1.4.1 — 2026-10-09
 
 - **GOT'eM picks in system folders too.** With `SYSTEM_SHORTCUTS=1`, a console

@@ -88,8 +88,10 @@ function loadFsSection() {
     let STAGE=".dripfeed", stageRoot=null, stateDir=null, stateIsConsole=false, revealedKeys=new Set();
     const keyOf=(s,n)=>s+String.fromCharCode(31)+n;
     ${slice("// ---------- File System Access ----------", "// ---------- connection-loss recovery")}
+    ${slice("async function readGotm", "let gotmEntries=[];")}
+    ${slice("async function readConfigIni", "// OSD budget")}
     this.api={moveFile,moveDir,moveStopsBatch,mergeMoveRequests,applyMoveRequests,requestSchedule,requestUnschedule,
-      cancelScheduleRequest,readMoveRequests,writeOccasions,writeOccasion,readOccasions,
+      cancelScheduleRequest,readMoveRequests,writeOccasions,writeOccasion,readOccasions,readGotm,writeGotm,writeGotms,patchConfigIni,
       set:o=>{if("stateDir" in o)stateDir=o.stateDir;if("stateIsConsole" in o)stateIsConsole=o.stateIsConsole;}};`, ctx,
     { filename: "Dripfeed-Scheduler.fs-section.js" });
   return ctx.api;
@@ -340,6 +342,16 @@ test("ledger: a write is refused, never sent to another card, when the connected
   await assert.rejects(api.writeOccasion("2027-02-02", "Hello"), /connected folder changed/);
   assert.strictEqual(io.createWritable, 0);
   assert.strictEqual(ledgerText(cardB, "occasions.tsv"), "2027-05-05\tB banner\n");
+  // GOT'eM picks and folder settings are read-modify-write of state files too.
+  cardA.files.set("gotm.tsv", "2027-01\tgames/NES/On A.nes\n"); cardB.files.set("gotm.tsv", "2027-05\tgames/PSX/On B.chd\n");
+  cardA.files.set("config.ini", 'SHOWCASE_PREFIX="A"\n'); cardB.files.set("config.ini", 'SHOWCASE_PREFIX="B"\n');
+  api.set({ stateDir: cardA });
+  await assert.rejects(api.writeGotm("2027-02", "games/NES/Pick.nes"), /connected folder changed/);
+  api.set({ stateDir: cardA });
+  await assert.rejects(api.patchConfigIni({ SHOWCASE_PREFIX: "From A" }), /connected folder changed/);
+  assert.strictEqual(io.createWritable, 0);
+  assert.strictEqual(ledgerText(cardB, "gotm.tsv"), "2027-05\tgames/PSX/On B.chd\n");
+  assert.strictEqual(ledgerText(cardB, "config.ini"), 'SHOWCASE_PREFIX="B"\n');
   // A request still waiting its turn when the card changes is refused as well;
   // the card that is connected keeps working.
   cardA.getFileHandle = get; api.set({ stateDir: cardA });
@@ -511,6 +523,7 @@ test("csv apply: a failed apply keeps the rows, the pasted text and the Import t
   const [msg, err] = lastToast(c);
   assert(err && /2 failed: simulated full card/.test(msg) && /still listed/.test(msg), msg);
   assert.strictEqual(c.calls.banners.length, 0, "no banner is saved when the requests were not written");
+  assert.deepStrictEqual(plain(c.rows.map(r => r.note)), ["simulated full card", "simulated full card"], "each failed row says why, for its status cell");
   // The write works again: the same rows go through, then the review is cleared.
   c.set({ requestHook: async () => ({ rejected: [] }) });
   await c.csvApply();
@@ -532,9 +545,12 @@ test("csv apply (limited mode): a refused rename keeps the review, and a second 
   assert.strictEqual(c.rows[0].staged, "2027-01-01_A.nes", "a moved row is now a scheduled row");
   assert.strictEqual(c.calls.showTab.length, 0);
   assert(/1 failed: .*sharing violation/.test(lastToast(c)[0]), lastToast(c)[0]);
+  assert.strictEqual(c.rows[0].note, undefined, "a row that went through carries no failure note");
+  assert(/sharing violation/.test(c.rows[1].note), "the failed row says why: " + c.rows[1].note);
   c.set({ moveHook: async () => {} });
   await c.csvApply();
   assert.strictEqual(c.calls.moves.join(";"), "A.nes -> 2027-01-01_A.nes;B.nes -> 2027-01-02_B.nes;B.nes -> 2027-01-02_B.nes", "only the failed row is moved again");
+  assert(/^Imported 1 game\b/.test(lastToast(c)[0]), "the retry counts only the row it moved: " + lastToast(c)[0]);
   assert.strictEqual(c.rows.length, 0); assert.strictEqual(c.calls.showTab.join(), "queue");
 });
 

@@ -561,17 +561,22 @@ df_lock_describe() {
 }
 DF_BUSY_MSG="Dripfeed is busy (a reveal or another change is running). Nothing was changed; try again in a minute."
 # Scratch files carry the pid that made them (.index.<pid>, .requests.<pid>,
-# .revealed.<pid>, schedule-requests.tsv.tmp.<pid> ...). A crash or power cut
-# leaves them behind; at the start of a pass, under the lock, remove the ones
-# whose maker is gone. A live process's files are never touched.
+# .revealed.<pid>, .add-index.<pid>, .diag.<pid>, schedule-requests.tsv.tmp.<pid>,
+# transactions/current.tsv.new.<pid> ...), and so does a lock set aside during a
+# reclaim (.lock.stale.<pid>). A crash or power cut leaves them behind; at the
+# start of a pass, under the lock, remove the ones whose maker is gone. A live
+# process's files are never touched.
 df_sweep_temp() {
   local f pid
   for f in "$DF_STATE"/.index.* "$DF_STATE"/.requests.* "$DF_STATE"/.revealed.* "$DF_STATE"/.recovered.* \
-           "$DF_SCHEDULE_REQUESTS".tmp.* "$DF_UNSCHEDULE_REQUESTS".tmp.*; do
-    [ -f "$f" ] || continue
+           "$DF_STATE"/.add-index.* "$DF_STATE"/.add-req.* "$DF_STATE"/.add-ann.* \
+           "$DF_STATE"/.diag-index.* "$DF_STATE"/.diag.* "$DF_TX_DIR"/current.tsv.new.* \
+           "$DF_SCHEDULE_REQUESTS".tmp.* "$DF_UNSCHEDULE_REQUESTS".tmp.* "$DF_LOCK".stale.*; do
+    [ -e "$f" ] || continue
     pid="${f##*.}"
     case "$pid" in ''|*[!0-9]*) continue ;; esac
-    df_pid_alive "$pid" || rm -f "$f" 2>/dev/null
+    df_pid_alive "$pid" && continue
+    if [ -d "$f" ]; then rm -rf "$f" 2>/dev/null; else rm -f "$f" 2>/dev/null; fi
   done
 }
 
@@ -758,8 +763,11 @@ df_tx_hold() {
   local now held
   df_strftime now '%s'; held="$DF_TX_DIR/held-$now.tsv"
   [ -e "$held" ] && held="$DF_TX_DIR/held-$now.$$.tsv"
-  mv "$DF_TX_DIR/current.tsv" "$held" 2>/dev/null
-  df_log "RECOVERY HOLD: $1 (journal kept as transactions/${held##*/})"
+  if mv "$DF_TX_DIR/current.tsv" "$held" 2>/dev/null; then
+    df_log "RECOVERY HOLD: $1 (journal kept as transactions/${held##*/})"
+  else   # read-only state folder: say so instead of claiming it was kept aside
+    df_log "RECOVERY HOLD: $1 (the journal could not be set aside as transactions/${held##*/}; it stays as transactions/current.tsv)"
+  fi
 }
 
 # Print a recovered reveal as system<TAB>name<TAB>date<TAB>destination. If the
@@ -772,6 +780,9 @@ df_tx_recover() {
   local tx="$DF_TX_DIR/current.tsv" d sys name src dest
   [ -f "$tx" ] || return 0
   IFS=$'\t' read -r d sys name src dest < "$tx"
+  # A journal short of a field could never be recorded (df_ledger_record refuses
+  # empty fields): hold it, rather than stop every later pass over it.
+  [ -n "$d" ] && [ -n "$sys" ] && [ -n "$name" ] || { df_tx_hold "incomplete journal"; return 1; }
   case "$src:$dest" in
     "$STAGING_ROOT"/*:"$GAMES_DIR"/*|"$GAMES_DIR"/*/"$STAGE_DIRNAME"/*:"$GAMES_DIR"/*) ;;
     *) df_tx_hold "invalid transaction paths"; return 1 ;;
@@ -1117,10 +1128,15 @@ df_confirm_any() {
 
 # Undrip asks twice. The first press of any button (controllers have no Enter key)
 # shows plainly what will happen and asks for one more; the second confirms. Doing
-# nothing at either step cancels. Returns 0 only when both presses arrived.
+# nothing at either step cancels. A held button repeats (a console keyboard after
+# about 250 ms, then every ~33 ms; a controller mapped to keys may too), so the
+# second question is asked only once the input has been quiet for a full second:
+# the button must be released and pressed again. Returns 0 only when both
+# presses arrived.
 df_confirm_undrip() {
   echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
   df_confirm_any 10 || return 1
+  while IFS= read -rsn1 -t 1 _ 2>/dev/null; do :; done   # held button / key repeat: wait for release
   echo
   echo "  One more press will, right now:"
   echo "    - put EVERY waiting game back in its system folder, whatever its date;"

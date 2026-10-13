@@ -21,6 +21,50 @@
 - Adds disposable-card coverage plus real-adapter, controller, DHCP, hotspot,
   hidden-network, and power-interruption steps to the Golden Path.
 
+# Dripfeed + GOT'eM 1.4.2
+
+Safety fixes from an outside review of 1.4.1. No new options; existing
+schedules, folders and settings are kept. Open `Dripfeed.sh` once on MiSTer
+after copying it so the helpers update. Full details are in
+[`Dripfeed/CHANGELOG.md`](Dripfeed/CHANGELOG.md).
+
+## Highlights
+
+- **CSV import you can trust.** A blank or day-first date is a repair row, not a
+  blank page; a failed import keeps your rows and pasted text for a retry and
+  says, per row, what went wrong; a review that cannot finish says why.
+- **Writes land on the right card.** A browser write that was still waiting when
+  you reconnected another card is refused instead of overwriting that card's
+  ledger, GOT'eM pick or settings. Keep one browser tab per card.
+- **Nothing is lost on a full card.** A reveal whose ledger row cannot be written
+  keeps its journal, is retried on the next hourly tick, and is recorded as soon
+  as the card can be written; a journal Dripfeed cannot resolve is kept aside and
+  shown by `--diag`.
+- **One pass at a time, always.** Reclaiming a crashed run's lock can no longer
+  preempt a starter that got there first; a lock set aside by a run that died is
+  swept with the other scratch files.
+- **Hold, don't guess.** A browser request for a game with both a queued and a
+  visible copy stays pending and is flagged by `--diag`.
+- **Undrip asks twice,** says plainly what the second press does, and asks the
+  second question only once the button has been released, so a held button never
+  answers both.
+- **The waiting library is marked** with an empty `.zaparooignore` file that some
+  library indexers honour; it is the only frontend-specific file Dripfeed writes.
+
+## Verification
+
+- Card simulation 223 checks, scheduler browser logic 31, suite-level 36, all
+  passing. New checks cover the lock race, the collision hold, the unwritable
+  ledger and its hourly retry, the held and incomplete journals, the scratch-file
+  sweep, the two presses and the held button, the marker placement, and three
+  release guards: the version matches the CHANGELOG, a card on an older version
+  is updated, and the launcher's embedded helpers are byte-identical to
+  `Scripts/`.
+- Hardware steps for `GOLDEN_PATH.md`: update an existing card and use Undrip
+  from the launcher; Undrip with one press, with two, and with a held key and a
+  held controller button (must not reset); a frontend that scans the card root
+  must not list waiting games.
+
 # Dripfeed + GOT'eM 1.4.1
 
 Large libraries, large games, and graphical frontends, including GOT'eM picks in

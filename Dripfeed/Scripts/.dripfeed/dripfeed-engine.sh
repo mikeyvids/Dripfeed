@@ -739,15 +739,17 @@ df_watch() {
   local day rc=0
   if [ "${REVEAL_AT_BOOT:-1}" -eq 1 ]; then df_run_reveal --silent; rc=$?; fi
   [ "$rc" -eq 2 ] && df_pass_flush     # the boot pass was skipped: refresh for the early hides
-  # A pass skipped because another process held the lock is retried later.
-  [ "$rc" -eq 2 ] || df_today_int > "$DF_LASTDAY"
+  # A pass skipped because another process held the lock (2), or stopped because
+  # revealed.tsv could not be written (1), is retried on the hourly tick, not
+  # tomorrow: the day is stamped only by a pass that ran to the end.
+  case "$rc" in 1|2) ;; *) df_today_int > "$DF_LASTDAY" ;; esac
   [ "${DAILY:-1}" -eq 1 ] || { df_log "watch done (daily off)"; return 0; }
   while :; do
     sleep "${WATCH_INTERVAL:-3600}"     # validated: never below 60 seconds
     day=$(df_today_int)
     if [ "$day" != "$(cat "$DF_LASTDAY" 2>/dev/null)" ]; then
       df_run_reveal --silent; rc=$?
-      [ "$rc" -eq 2 ] || echo "$day" > "$DF_LASTDAY"
+      case "$rc" in 1|2) ;; *) echo "$day" > "$DF_LASTDAY" ;; esac
     fi
   done
 }
