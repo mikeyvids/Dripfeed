@@ -12,6 +12,12 @@ agree on. `tests/run.sh` is the conformance test; CI runs it on every change.
 
 - `STAGING_ROOT` — default `/media/fat/.dripfeed-library`; it sits outside
   `games/` so ordinary library scanners do not discover held-back titles.
+- `STAGING_ROOT` holds one empty marker file, `.zaparooignore`, written when the
+  library is created (or on the next pass if it is missing) and removed by Undrip
+  with the library. It is a marker some library indexers honour, so the waiting
+  library is skipped even if the card root is added as a scan root. It is the only
+  frontend-specific file Dripfeed writes, and it is never written inside a legacy
+  `games/<SYSTEM>/.dripfeed/` folder (the migration's `rmdir` must keep working).
 - `<SYSTEM>` — the core's games-folder name exactly (`SNES`, `GENESIS`, `Saturn`, …).
 - The old `<GAMES_DIR>/<SYSTEM>/.dripfeed/` layout remains readable during
   upgrades, but new scheduling writes only to `STAGING_ROOT`.

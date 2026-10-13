@@ -3,8 +3,8 @@
 # Copyright (C) 2026 MikeyVids
 # See LICENSE for the full license and CREDITS.md for upstream acknowledgements.
 # Dripfeed.sh — single-file, self-installing launcher for MiSTer FPGA.
-# Drop ONLY this file into /media/fat/Scripts. Menu: UP = Undrip (press any button to
-# confirm), DOWN = Reinstall/repair (keeps your schedule); otherwise it shows what's
+# Drop ONLY this file into /media/fat/Scripts. Menu: UP = Undrip (two presses of any
+# button to confirm), DOWN = Reinstall/repair (keeps your schedule); otherwise it shows what's
 # new and returns to the menu (no reboot). Undrip/Reinstall reboot when done. Writes
 # its helpers + boot hook, maintains ONE dated "What's New" menu folder whose name only
 # changes when games actually unlock. See CHANGELOG.md.
@@ -246,6 +246,18 @@ df_load_config() {
 
 df_stage_dir() { printf '%s/%s' "$STAGING_ROOT" "$1"; }
 df_legacy_stage_dir() { printf '%s/%s/%s' "$GAMES_DIR" "$1" "$STAGE_DIRNAME"; }
+
+# The waiting library root carries one empty marker file. Some library indexers
+# honour it and skip the folder even when the card root is added as a scan root.
+# It is the only frontend-specific file Dripfeed writes: it goes in STAGING_ROOT
+# only, never in a legacy games/<SYSTEM>/.dripfeed/ folder (the migration's
+# rmdir there must keep working). Written when the library is created, and again
+# on the next pass if it is missing; Undrip removes it with the library.
+DF_LIBRARY_MARKER=".zaparooignore"
+df_library_marker() {
+  [ -d "$STAGING_ROOT" ] || return 0
+  [ -e "$STAGING_ROOT/$DF_LIBRARY_MARKER" ] || : > "$STAGING_ROOT/$DF_LIBRARY_MARKER" 2>/dev/null || true
+}
 
 # ---- Queue index (one builtin-only walk, then awk joins) ----------------------
 # Write one line per queue entry: SYSTEM<TAB>CLEAN-NAME<TAB>PATH<TAB>new|legacy.
@@ -1145,6 +1157,21 @@ df_confirm_any() {
   return 1
 }
 
+# Undrip asks twice. The first press of any button (controllers have no Enter key)
+# shows plainly what will happen and asks for one more; the second confirms. Doing
+# nothing at either step cancels. Returns 0 only when both presses arrived.
+df_confirm_undrip() {
+  echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
+  df_confirm_any 10 || return 1
+  echo
+  echo "  One more press will, right now:"
+  echo "    - put EVERY waiting game back in its system folder, whatever its date;"
+  echo "    - clear the whole schedule, every Dripfeed folder and every setting;"
+  echo "    - restart the console. Games and saves stay as they are."
+  echo "  Press ANY button again to confirm - or do nothing to cancel."
+  df_confirm_any 10
+}
+
 # ---- Showcase folder name (STICKY) -------------------------------------------
 # The folder is renamed ONLY when a reveal actually unlocks a game (df_showcase_stamp_name
 # is called by the engine right before revealing). Every other launch/boot reuses the
@@ -1691,6 +1718,7 @@ df_migrate_legacy_queues() {
     rm -f "$legacy"/.DS_Store "$legacy"/._* 2>/dev/null || true
     rmdir "$legacy" 2>/dev/null || true
   done
+  df_library_marker                      # the library may have just been created
   [ "$moved" -eq 0 ] || { sync 2>/dev/null || true; df_log "LEGACY MIGRATION complete: $moved moved, $held held"; }
   return 0
 }
@@ -1831,6 +1859,7 @@ df_process_schedule_requests() {
   done < "$ann"
   mv "$tmp" "$DF_SCHEDULE_REQUESTS"; sync
   rm -f "$idx" "$ann" 2>/dev/null
+  df_library_marker                      # the library may have just been created
 }
 
 # Print due entries as date<TAB>system<TAB>path. Builtins only per entry; the
@@ -2207,6 +2236,7 @@ df_reveal_pass() {
   df_migrate_legacy_queues
   df_process_unschedule_requests
   df_process_schedule_requests
+  df_library_marker                      # put the library marker back if it went missing
   # Never reveal / name a folder on an unsynced clock (would create a 1970-dated folder
   # and reveal games with the wrong date).
   if ! df_clock_ok; then
@@ -2348,6 +2378,7 @@ df_watch() {
     df_migrate_legacy_queues
     df_process_unschedule_requests
     df_process_schedule_requests
+    df_library_marker
     df_unlock
   fi
   sleep "${BOOT_DELAY:-30}"
@@ -2611,7 +2642,10 @@ df_undrip() {
   rm -rf "$DF_STATE" 2>/dev/null
   DF_LOCK_HELD=0                          # the lock went with the state folder
   if [ "$DF_UNDRIP_HELD" -eq 0 ]; then
-    rmdir "$STAGING_ROOT" 2>/dev/null || true
+    # The marker goes with the library; if the library stays (quarantined
+    # copies under .conflicts), it stays marked.
+    rm -f "$STAGING_ROOT/$DF_LIBRARY_MARKER" 2>/dev/null
+    rmdir "$STAGING_ROOT" 2>/dev/null || df_library_marker
     echo "  removed all Dripfeed folders, files, and the boot hook."
   else
     echo "  removed the engine and boot hook; kept the waiting library so no game was deleted."
@@ -2794,6 +2828,7 @@ df_add() {
   [ -d "$sysdir" ] || { echo "No such system folder: $sysdir"; return 1; }
   df_lock_wait || { echo "$DF_BUSY_MSG"; return 1; }
   local stage; stage="$(df_stage_dir "$sys")"; [ -d "$stage" ] || mkdir -p "$stage"
+  df_library_marker                      # the library may have just been created
   # Look every file up in ONE awk pass over a one-walk index of this system's
   # queue (the old per-file rescans spawned processes quadratically).
   local idx="$DF_STATE/.add-index.$$" req="$DF_STATE/.add-req.$$" ann="$DF_STATE/.add-ann.$$"
@@ -2987,7 +3022,8 @@ __DF_SCHEDULE__
 # Restores every scheduled game to its normal folder, deletes all Dripfeed folders,
 # shortcuts, and settings (keeping only Scripts/Dripfeed.sh), then reboots so the menu
 # comes back clean. Re-run Dripfeed.sh afterwards for a clean reinstall or a fresh
-# schedule. Press ANY button to confirm; doing nothing cancels safely.
+# schedule. It takes TWO presses of any button: the first shows what will happen and
+# asks for one more, the second confirms; doing nothing cancels safely.
 
 DRIPFEED_ROOT="${DRIPFEED_ROOT:-/media/fat}"
 HELP="$DRIPFEED_ROOT/Scripts/.dripfeed"
@@ -3013,10 +3049,9 @@ echo "  Restores ALL scheduled games to their folders, deletes every"
 echo "  Dripfeed folder / shortcut / setting (keeps Scripts/Dripfeed.sh),"
 echo "  then reboots. Your ROMs and saves are NOT touched."
 echo
-if type df_confirm_any >/dev/null 2>&1; then
+if type df_confirm_undrip >/dev/null 2>&1; then
   df_ui_begin; trap 'df_ui_end' EXIT
-  echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
-  if df_confirm_any 10; then
+  if df_confirm_undrip; then
     echo; echo "  Resetting..."
     if "$HELP/dripfeed-engine.sh" --undrip; then
       df_menu_countdown 5 "Rebooting" >/dev/null
@@ -3086,8 +3121,7 @@ case "$c" in
     scr_clear; banner
     echo "  UNDRIP restores ALL scheduled games, removes every Dripfeed folder/setting"
     echo "  (keeps Dripfeed.sh), and restarts. ROMs and saves are NOT touched."; echo
-    echo "  Press ANY button to confirm - or do nothing to cancel."
-    if df_confirm_any 10; then
+    if df_confirm_undrip; then
       echo; echo "  Resetting..."
       if "$HELP/dripfeed-engine.sh" --undrip; then
         df_menu_countdown 5 "Restarting" >/dev/null

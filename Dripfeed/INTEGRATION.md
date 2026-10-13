@@ -23,6 +23,10 @@ modify a frontend, its private database, its settings, or its binaries.
   moment of its reveal. Contents are never changed.
 - Optional, off by default: `.mgl` shortcuts inside each system folder
   (`SYSTEM_SHORTCUTS=1`, see below).
+- One empty marker file, `.zaparooignore`, in the waiting library root
+  (`/.dripfeed-library/`). Some library indexers honour it, so the waiting library
+  is skipped even if the card root is added as a scan root. It is the only
+  frontend-specific file Dripfeed writes.
 
 ## Menu placement
 

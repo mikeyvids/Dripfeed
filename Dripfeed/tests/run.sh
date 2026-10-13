@@ -93,6 +93,7 @@ mkdir -p "$ROOT/games/GENESIS/.dripfeed"
 mv "$ROOT/.dripfeed-library/GENESIS/$(date +%Y-%m-%d)_Migrate Only Test.md" "$ROOT/games/GENESIS/.dripfeed/"
 bash "$ENG" --migrate >/dev/null 2>&1
 chk "upgrade moves the legacy queue outside games/" '[ -f "$ROOT/.dripfeed-library/MegaCD/2000-01-01_Europe/cd_bios.rom" ] && [ ! -d "$ROOT/games/MegaCD/.dripfeed" ]'
+chk "the .zaparooignore marker sits in the waiting library root only, never in a legacy games/<SYSTEM>/.dripfeed/ folder (which migration still removes)" '[ -f "$ROOT/.dripfeed-library/.zaparooignore" ] && [ -z "$(find "$ROOT/games" -name .zaparooignore 2>/dev/null)" ] && [ ! -d "$ROOT/games/GENESIS/.dripfeed" ]'
 chk "migration-only mode does not reveal a due game" '[ -f "$ROOT/.dripfeed-library/GENESIS/$(date +%Y-%m-%d)_Migrate Only Test.md" ] && [ ! -e "$ROOT/games/GENESIS/Migrate Only Test.md" ]'
 chk "legacy queued firmware stays hidden from automatic reveal" '[ -f "$ROOT/.dripfeed-library/MegaCD/2000-01-01_Europe/cd_bios.rom" ] && [ ! -e "$ROOT/games/MegaCD/Europe" ]'
 bash "$SC" remove MegaCD 2000-01-01_Europe >/dev/null 2>&1
@@ -490,8 +491,19 @@ newcard CZ; rm -rf "$CZ/Scripts/.dripfeed"; cp "$HERE/../Scripts/Dripfeed.sh" "$
 LOUT="$(PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Dripfeed.sh" </dev/null 2>&1)"
 LVER="$(grep -m1 '^DRIPFEED_VERSION=' "$HERE/../Scripts/Dripfeed.sh" | cut -d'"' -f2)"
 chk "launcher outside MiSTer installs but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ "$(cat "$CZ/Scripts/.dripfeed/.version")" = "$LVER" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+mkdir -p "$CZ/games/SNES"; echo two > "$CZ/games/SNES/Two Press.sfc"
+sch "$CZ" add SNES +5 "$CZ/games/SNES/Two Press.sfc" >/dev/null 2>&1
+chk "the waiting library gets its .zaparooignore marker when it is created" '[ -f "$CZ/.dripfeed-library/.zaparooignore" ] && [ -e "$CZ/.dripfeed-library/SNES" ]'
+rm -f "$CZ/.dripfeed-library/.zaparooignore"; eng "$CZ" --auto >/dev/null 2>&1
+chk "a missing marker is written again on the next pass" '[ -f "$CZ/.dripfeed-library/.zaparooignore" ]'
+# Undrip asks twice: one press shows what will happen; silence after it cancels.
+LOUT="$({ printf '\033[A'; sleep 0.5; printf x; } | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Dripfeed.sh" 2>&1)"
+chk "launcher UP = Undrip: one press shows what will happen and asks for one more; silence cancels" 'printf "%s\n" "$LOUT" | grep -qi "one more press" && printf "%s\n" "$LOUT" | grep -q "Cancelled" && [ -d "$CZ/Scripts/.dripfeed" ] && [ ! -e "$CZ/games/SNES/Two Press.sfc" ]'
 LOUT="$(printf x | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
-chk "Undrip.sh outside MiSTer resets but never reboots the computer" '[ ! -e "$NOBOOT/rebooted" ] && [ ! -d "$CZ/Scripts/.dripfeed" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+chk "Undrip.sh: one press shows what will happen and asks for one more; silence cancels" 'printf "%s\n" "$LOUT" | grep -qi "one more press" && printf "%s\n" "$LOUT" | grep -q "Cancelled" && [ -d "$CZ/Scripts/.dripfeed" ] && [ -f "$CZ/Scripts/Undrip.sh" ] && [ ! -e "$CZ/games/SNES/Two Press.sfc" ] && [ ! -e "$NOBOOT/rebooted" ]'
+LOUT="$({ printf x; sleep 0.5; printf x; } | PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$CZ" bash "$CZ/Scripts/Undrip.sh" 2>&1)"
+chk "Undrip.sh: a second press undrips (outside MiSTer it resets but never reboots the computer)" '[ ! -e "$NOBOOT/rebooted" ] && [ ! -d "$CZ/Scripts/.dripfeed" ] && [ -f "$CZ/games/SNES/Two Press.sfc" ] && printf "%s\n" "$LOUT" | grep -q "restart skipped"'
+chk "Undrip removed the marker with the waiting library (no empty library left behind)" '[ ! -e "$CZ/.dripfeed-library" ]'
 scratch NOCARD; NOWHERE="$NOCARD/not-a-card"
 PATH="$NOBOOT:$PATH" DRIPFEED_ROOT="$NOWHERE" bash "$HERE/../Scripts/Dripfeed.sh" </dev/null >/dev/null 2>&1; RC=$?
 chk "launcher refuses a root without Scripts/ and creates nothing there" '[ "$RC" -ne 0 ] && [ ! -e "$NOWHERE" ] && [ ! -e "$NOBOOT/rebooted" ]'
@@ -816,7 +828,7 @@ newcard CR; mkdir -p "$CR/games/SNES/.dripfeed"; echo q > "$CR/games/SNES/.dripf
 printf '2099-01-01\t..\tScripts\n2099-01-01\tSNES\t..\n2099-01-01\tSNES\t.dripfeed\n' > "$CR/Scripts/.dripfeed/schedule-requests.tsv"
 printf '..\tScripts\n' > "$CR/Scripts/.dripfeed/unschedule-requests.tsv"
 eng "$CR" --auto >/dev/null 2>&1
-chk "requests naming .. or the legacy queue folder are ignored (nothing moved)" '[ -f "$CR/Scripts/.dripfeed/dripfeed-engine.sh" ] && [ -d "$CR/games/SNES" ] && [ -z "$(ls -A "$CR/.dripfeed-library" 2>/dev/null | grep -v "^SNES$")" ] && [ -z "$(ls "$CR" | grep "^2099")" ] && [ -f "$CR/.dripfeed-library/SNES/2099-01-01_Legacy.sfc" ]'
+chk "requests naming .. or the legacy queue folder are ignored (nothing moved)" '[ -f "$CR/Scripts/.dripfeed/dripfeed-engine.sh" ] && [ -d "$CR/games/SNES" ] && [ -z "$(ls -A "$CR/.dripfeed-library" 2>/dev/null | grep -v -e "^SNES$" -e "^.zaparooignore$")" ] && [ -z "$(ls "$CR" | grep "^2099")" ] && [ -f "$CR/.dripfeed-library/SNES/2099-01-01_Legacy.sfc" ]'
 
 echo "== stale-lock reclaim: two starters, one stale lock, exactly one wins =="
 newcard CS; sleep 0.01 & DEADPID=$!; wait "$DEADPID" 2>/dev/null

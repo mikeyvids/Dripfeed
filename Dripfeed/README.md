@@ -218,6 +218,10 @@ settings, so it helps to know how these frontends see the card:
   game in that folder, usually sorted by name. There is no "new" view. That is
   expected: Dripfeed keeps unreleased games out of `games/` entirely (in the hidden
   `/.dripfeed-library/`), so after a refresh only released games are listed.
+- **The waiting library carries one marker file.** `.dripfeed-library/.zaparooignore`
+  is an empty file some library indexers honour, so the waiting library is skipped
+  even if the card root is added as a scan root. It is the only frontend-specific
+  file Dripfeed writes.
 - **They do not show top-level menu folders.** What's New (`_Dripfeed - …`) and
   `_Game of the Month` are top-level folders in the stock menu's core list. A
   frontend that only looks inside system folders never sees them. Use the stock menu
@@ -252,6 +256,13 @@ settings, so it helps to know how these frontends see the card:
   moment it was revealed, so date-sorted file browsers and tools show it as new. The
   stock menu ignores file dates. Backup or sync tools will see the new date as a
   change; set `TOUCH_ON_REVEAL=0` to keep the original dates.
+
+Keep each handheld's games in its own folder (`GameGear`, `GBC`, `FDS`) rather than
+in the parent console's folder (`SMS`, `GAMEBOY`, `NES`). The folder decides the set
+name, and so where new saves go, from the stock menu and from a frontend alike.
+Moving a game you already play changes where its new saves go, so this is a
+one-time choice to make before scheduling; Dripfeed never moves a game between
+system folders.
 
 ---
 

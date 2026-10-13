@@ -58,6 +58,7 @@ df_migrate_legacy_queues() {
     rm -f "$legacy"/.DS_Store "$legacy"/._* 2>/dev/null || true
     rmdir "$legacy" 2>/dev/null || true
   done
+  df_library_marker                      # the library may have just been created
   [ "$moved" -eq 0 ] || { sync 2>/dev/null || true; df_log "LEGACY MIGRATION complete: $moved moved, $held held"; }
   return 0
 }
@@ -198,6 +199,7 @@ df_process_schedule_requests() {
   done < "$ann"
   mv "$tmp" "$DF_SCHEDULE_REQUESTS"; sync
   rm -f "$idx" "$ann" 2>/dev/null
+  df_library_marker                      # the library may have just been created
 }
 
 # Print due entries as date<TAB>system<TAB>path. Builtins only per entry; the
@@ -574,6 +576,7 @@ df_reveal_pass() {
   df_migrate_legacy_queues
   df_process_unschedule_requests
   df_process_schedule_requests
+  df_library_marker                      # put the library marker back if it went missing
   # Never reveal / name a folder on an unsynced clock (would create a 1970-dated folder
   # and reveal games with the wrong date).
   if ! df_clock_ok; then
@@ -715,6 +718,7 @@ df_watch() {
     df_migrate_legacy_queues
     df_process_unschedule_requests
     df_process_schedule_requests
+    df_library_marker
     df_unlock
   fi
   sleep "${BOOT_DELAY:-30}"
@@ -978,7 +982,10 @@ df_undrip() {
   rm -rf "$DF_STATE" 2>/dev/null
   DF_LOCK_HELD=0                          # the lock went with the state folder
   if [ "$DF_UNDRIP_HELD" -eq 0 ]; then
-    rmdir "$STAGING_ROOT" 2>/dev/null || true
+    # The marker goes with the library; if the library stays (quarantined
+    # copies under .conflicts), it stays marked.
+    rm -f "$STAGING_ROOT/$DF_LIBRARY_MARKER" 2>/dev/null
+    rmdir "$STAGING_ROOT" 2>/dev/null || df_library_marker
     echo "  removed all Dripfeed folders, files, and the boot hook."
   else
     echo "  removed the engine and boot hook; kept the waiting library so no game was deleted."

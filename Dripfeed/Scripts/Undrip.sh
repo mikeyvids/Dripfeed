@@ -3,7 +3,8 @@
 # Restores every scheduled game to its normal folder, deletes all Dripfeed folders,
 # shortcuts, and settings (keeping only Scripts/Dripfeed.sh), then reboots so the menu
 # comes back clean. Re-run Dripfeed.sh afterwards for a clean reinstall or a fresh
-# schedule. Press ANY button to confirm; doing nothing cancels safely.
+# schedule. It takes TWO presses of any button: the first shows what will happen and
+# asks for one more, the second confirms; doing nothing cancels safely.
 
 DRIPFEED_ROOT="${DRIPFEED_ROOT:-/media/fat}"
 HELP="$DRIPFEED_ROOT/Scripts/.dripfeed"
@@ -29,10 +30,9 @@ echo "  Restores ALL scheduled games to their folders, deletes every"
 echo "  Dripfeed folder / shortcut / setting (keeps Scripts/Dripfeed.sh),"
 echo "  then reboots. Your ROMs and saves are NOT touched."
 echo
-if type df_confirm_any >/dev/null 2>&1; then
+if type df_confirm_undrip >/dev/null 2>&1; then
   df_ui_begin; trap 'df_ui_end' EXIT
-  echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
-  if df_confirm_any 10; then
+  if df_confirm_undrip; then
     echo; echo "  Resetting..."
     if "$HELP/dripfeed-engine.sh" --undrip; then
       df_menu_countdown 5 "Rebooting" >/dev/null

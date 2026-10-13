@@ -205,6 +205,18 @@ df_load_config() {
 df_stage_dir() { printf '%s/%s' "$STAGING_ROOT" "$1"; }
 df_legacy_stage_dir() { printf '%s/%s/%s' "$GAMES_DIR" "$1" "$STAGE_DIRNAME"; }
 
+# The waiting library root carries one empty marker file. Some library indexers
+# honour it and skip the folder even when the card root is added as a scan root.
+# It is the only frontend-specific file Dripfeed writes: it goes in STAGING_ROOT
+# only, never in a legacy games/<SYSTEM>/.dripfeed/ folder (the migration's
+# rmdir there must keep working). Written when the library is created, and again
+# on the next pass if it is missing; Undrip removes it with the library.
+DF_LIBRARY_MARKER=".zaparooignore"
+df_library_marker() {
+  [ -d "$STAGING_ROOT" ] || return 0
+  [ -e "$STAGING_ROOT/$DF_LIBRARY_MARKER" ] || : > "$STAGING_ROOT/$DF_LIBRARY_MARKER" 2>/dev/null || true
+}
+
 # ---- Queue index (one builtin-only walk, then awk joins) ----------------------
 # Write one line per queue entry: SYSTEM<TAB>CLEAN-NAME<TAB>PATH<TAB>new|legacy.
 # $2 limits the walk to one system. Paths are spelled exactly as df_stage_dir and
@@ -1101,6 +1113,21 @@ df_confirm_any() {
     waited=$((waited+1))
   done
   return 1
+}
+
+# Undrip asks twice. The first press of any button (controllers have no Enter key)
+# shows plainly what will happen and asks for one more; the second confirms. Doing
+# nothing at either step cancels. Returns 0 only when both presses arrived.
+df_confirm_undrip() {
+  echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
+  df_confirm_any 10 || return 1
+  echo
+  echo "  One more press will, right now:"
+  echo "    - put EVERY waiting game back in its system folder, whatever its date;"
+  echo "    - clear the whole schedule, every Dripfeed folder and every setting;"
+  echo "    - restart the console. Games and saves stay as they are."
+  echo "  Press ANY button again to confirm - or do nothing to cancel."
+  df_confirm_any 10
 }
 
 # ---- Showcase folder name (STICKY) -------------------------------------------

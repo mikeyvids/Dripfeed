@@ -43,8 +43,9 @@ backlog rotation, or personal and community Game of the Month picks.
 - **[Dripfeed.sh](Dripfeed/Scripts/Dripfeed.sh):** on MiSTer, installs and runs
   the engine. It waits for a trustworthy clock, reveals games that are due,
   repairs interrupted work, and updates What's New and GOT'eM.
-- **[Undrip.sh](Dripfeed/Scripts/Undrip.sh):** an optional confirmed reset that
-  returns waiting games to their normal folders and removes generated state.
+- **[Undrip.sh](Dripfeed/Scripts/Undrip.sh):** an optional reset, confirmed by two
+  button presses, that returns waiting games to their normal folders and removes
+  generated state.
 
 ### Features
 

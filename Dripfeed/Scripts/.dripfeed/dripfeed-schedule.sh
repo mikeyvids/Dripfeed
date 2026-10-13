@@ -39,6 +39,7 @@ df_add() {
   [ -d "$sysdir" ] || { echo "No such system folder: $sysdir"; return 1; }
   df_lock_wait || { echo "$DF_BUSY_MSG"; return 1; }
   local stage; stage="$(df_stage_dir "$sys")"; [ -d "$stage" ] || mkdir -p "$stage"
+  df_library_marker                      # the library may have just been created
   # Look every file up in ONE awk pass over a one-walk index of this system's
   # queue (the old per-file rescans spawned processes quadratically).
   local idx="$DF_STATE/.add-index.$$" req="$DF_STATE/.add-req.$$" ann="$DF_STATE/.add-ann.$$"
