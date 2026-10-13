@@ -24,6 +24,8 @@ assert.strictEqual(gotmStatePath("_Arcade/Game.mra"), "_Arcade/Game.mra");
 assert(html.includes("resolvePath(row.path)"), "CSV Review must resolve the normalized GOT'eM path");
 assert(html.includes("writeGotm(r.gotem, gotmStatePath(r.path)"), "CSV Apply must write MiSTer-state paths");
 assert(html.includes("csvCell(gotmCsvPath(p))"), "CSV export must return canonical games-relative paths");
+const review = html.slice(html.indexOf("async function csvReview"), html.indexOf("function rowOk"));
+assert(review.includes("row.dateRaw.trim()") && !/\br\.dateRaw\b/.test(review), "CSV Review must read the date it stored on the row: a blank or day-first cell is a repair row, not a crash");
 
 const csvStart = html.indexOf("function parseCsv");
 const csvEnd = html.indexOf("// Resolve a games-relative path", csvStart);

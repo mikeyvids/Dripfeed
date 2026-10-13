@@ -3,12 +3,24 @@
 # Restores every scheduled game to its normal folder, deletes all Dripfeed folders,
 # shortcuts, and settings (keeping only Scripts/Dripfeed.sh), then reboots so the menu
 # comes back clean. Re-run Dripfeed.sh afterwards for a clean reinstall or a fresh
-# schedule. Press ANY button to confirm; doing nothing cancels safely.
+# schedule. It takes TWO presses of any button: the first shows what will happen and
+# asks for one more, the second confirms; doing nothing cancels safely.
 
 DRIPFEED_ROOT="${DRIPFEED_ROOT:-/media/fat}"
 HELP="$DRIPFEED_ROOT/Scripts/.dripfeed"
 export DRIPFEED_INTERACTIVE=1
 [ -f "$HELP/dripfeed-common.sh" ] && . "$HELP/dripfeed-common.sh"
+
+# Restart only on a real MiSTer (never a desktop test machine, even as root).
+on_mister() {
+  [ "${DRIPFEED_NO_REBOOT:-0}" != 1 ] && [ "$DRIPFEED_ROOT" = /media/fat ] && [ -x /media/fat/MiSTer ] &&
+    case "$(uname -m 2>/dev/null)" in arm*) true ;; *) false ;; esac
+}
+restart() {
+  sync
+  if on_mister; then reboot 2>/dev/null || true
+  else echo; echo "  (not running on a MiSTer: restart skipped)"; fi
+}
 
 clear 2>/dev/null || printf '\033[2J\033[H'
 echo
@@ -18,14 +30,16 @@ echo "  Restores ALL scheduled games to their folders, deletes every"
 echo "  Dripfeed folder / shortcut / setting (keeps Scripts/Dripfeed.sh),"
 echo "  then reboots. Your ROMs and saves are NOT touched."
 echo
-if type df_confirm_any >/dev/null 2>&1; then
+if type df_confirm_undrip >/dev/null 2>&1; then
   df_ui_begin; trap 'df_ui_end' EXIT
-  echo "  Press ANY button now to UNDRIP - or do nothing to cancel."
-  if df_confirm_any 10; then
+  if df_confirm_undrip; then
     echo; echo "  Resetting..."
-    "$HELP/dripfeed-engine.sh" --undrip
-    df_menu_countdown 5 "Rebooting" >/dev/null
-    sync; reboot 2>/dev/null || true
+    if "$HELP/dripfeed-engine.sh" --undrip; then
+      df_menu_countdown 5 "Rebooting" >/dev/null
+      restart
+    else
+      echo; echo "  Nothing was reset. Try again in a minute."; sleep 3
+    fi
   else
     echo; echo "  Cancelled - nothing changed."; sleep 2
   fi

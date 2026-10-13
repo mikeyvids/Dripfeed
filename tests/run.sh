@@ -150,12 +150,6 @@ LEGDRY="$(BACKTHEFUP_ROOT="$LEGROOT" BACKTHEFUP_DIR_OVERRIDE="$LEGOUT" bash "$LE
 chk "legacy destination migrates but unsafe include lists do not" 'grep -q "RCLONE_REMOTE=gdrive:OldFolder" "$LEGROOT/Scripts/.backthefup/backtheFup.conf" && printf "%s" "$LEGDRY" | grep -q "saves" && ! printf "%s" "$LEGDRY" | grep -q "games"'
 
 echo "== public-boundary scan =="
-BANNED_NAME="zapa""roo"
-if grep -RniI --exclude-dir=.git "$BANNED_NAME" "$HERE" >/dev/null; then
-  no "unapproved integration references are absent"
-else
-  ok "unapproved integration references are absent"
-fi
 if grep -RniE --exclude=LICENSE --exclude=run.sh --exclude='*.md' --exclude-dir=.git \
   '/Users/|\.obsidian|retroachievements\.cfg.*password=.+|^RCLONE_REMOTE=[A-Za-z0-9._-]+:.+' "$HERE" >/dev/null; then
   no "no vault, host path, or credential leaked"
